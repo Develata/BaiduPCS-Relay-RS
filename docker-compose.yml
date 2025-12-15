@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  app:
+    image: rust:1.91
+    container_name: pcs_dev
+    # 自动把当前目录挂载进去
+    volumes:
+      - .:/app
+    working_dir: /app
+    ports:
+      - "5200:5200"
+    # 这里配置一次，以后就不用管了
+    environment:
+      - http_proxy=http://host.docker.internal:10808
+      - https_proxy=http://host.docker.internal:10808
+      - HTTP_PROXY=http://host.docker.internal:10808
+      - HTTPS_PROXY=http://host.docker.internal:10808
+      - no_proxy=localhost,127.0.0.1,::1,rsproxy.cn,crates.io
+    # 容器启动后自动安装依赖并运行
+    # 注意：这里把 apt install 和 cargo run 连起来了
+    command: >
+      bash -c "apt-get update && apt-get install -y pkg-config libssl-dev && cargo run"

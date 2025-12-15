@@ -1,0 +1,15 @@
+[package]
+name = "baidu_pan_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["macros"] }
+reqwest = { version = "0.11", features = ["json", "cookies", "rustls-tls", "multipart"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+once_cell = "1"
+anyhow = "1"
+urlencoding = "2"

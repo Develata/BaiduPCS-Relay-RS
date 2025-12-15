@@ -1,0 +1,23 @@
+{
+  "name": "Rust Pan Server",
+  "image": "rust:1.91",
+  
+  // --- 👇 添加这一段 👇 ---
+  // 强制指定容器内的环境变量，直接指向 Windows 主机的 10808 端口
+  // 这样既覆盖了 VS Code 可能注入的错误 IP (127.0.0.1)，也不需要每次手动 export
+  "containerEnv": {
+    "http_proxy": "http://host.docker.internal:10808",
+    "https_proxy": "http://host.docker.internal:10808",
+    "HTTP_PROXY": "http://host.docker.internal:10808",
+    "HTTPS_PROXY": "http://host.docker.internal:10808",
+    "ALL_PROXY": "http://host.docker.internal:10808",
+    "NO_PROXY": "localhost,127.0.0.1,::1,rsproxy.cn,crates.io"
+  },
+  // --- 👆 添加这一段 👆 ---
+
+  "customizations": {
+    // ... 其他配置保持不变 ...
+  },
+  "remoteUser": "root",
+  "postCreateCommand": "apt-get update && apt-get install -y pkg-config libssl-dev"
+}
