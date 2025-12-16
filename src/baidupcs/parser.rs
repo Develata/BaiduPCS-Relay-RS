@@ -43,4 +43,3 @@ pub fn extract_surl(share_url: &str) -> Option<String> {
 
     None
 }
-

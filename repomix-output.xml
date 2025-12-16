@@ -77,6 +77,32 @@ TRANSFER_FIX.md
 <files>
 This section contains the contents of the repository's files.
 
+<file path=".devcontainer/devcontainer.json">
+{
+  "name": "Rust Pan Server",
+  "image": "rust:1.91",
+  
+  // --- 👇 添加这一段 👇 ---
+  // 强制指定容器内的环境变量，直接指向 Windows 主机的 10808 端口
+  // 这样既覆盖了 VS Code 可能注入的错误 IP (127.0.0.1)，也不需要每次手动 export
+  "containerEnv": {
+    "http_proxy": "http://host.docker.internal:10808",
+    "https_proxy": "http://host.docker.internal:10808",
+    "HTTP_PROXY": "http://host.docker.internal:10808",
+    "HTTPS_PROXY": "http://host.docker.internal:10808",
+    "ALL_PROXY": "http://host.docker.internal:10808",
+    "NO_PROXY": "localhost,127.0.0.1,::1,rsproxy.cn,crates.io"
+  },
+  // --- 👆 添加这一段 👆 ---
+
+  "customizations": {
+    // ... 其他配置保持不变 ...
+  },
+  "remoteUser": "root",
+  "postCreateCommand": "apt-get update && apt-get install -y pkg-config libssl-dev"
+}
+</file>
+
 <file path=".github/workflows/ci.yml">
 name: CI
 
@@ -101,7 +127,7 @@ jobs:
 </file>
 
 <file path="src/baidupcs/mod.rs">
-//! 百度网盘核心功能
+//! 百度网盘 PCS 模块
 
 pub mod types;
 pub mod share;
@@ -163,10 +189,12 @@ pub fn extract_surl(share_url: &str) -> Option<String> {
 </file>
 
 <file path="src/baidupcs/share.rs">
-//! 分享文件处理（参考 baidupcs-go 实现）
+//! 百度网盘分享链接解析模块
+//! 
+//! 参考 baidupcs-go 实现
 
 use anyhow::{anyhow, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -182,18 +210,40 @@ struct ListResponse {
 
 #[derive(Debug, Deserialize)]
 struct FileItem {
+    // 百度接口字段名可能是 fs_id 或 fsid，且值可能是字符串或数字
+    #[serde(rename = "fs_id", alias = "fsid", deserialize_with = "string_or_u64")]
     fs_id: u64,
     #[serde(default)]
     server_filename: String,
 }
 
+/// 自定义反序列化：支持字符串或数字类型的 fsid
+fn string_or_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrU64 {
+        Str(String),
+        Num(u64),
+    }
+    
+    match StringOrU64::deserialize(deserializer)? {
+        StringOrU64::Str(s) => s.parse().map_err(Error::custom),
+        StringOrU64::Num(n) => Ok(n),
+    }
+}
+
 impl FileItem {
-    fn get_fs_id(&self) -> u64 {
+    fn get_fsid(&self) -> u64 {
         self.fs_id
     }
 }
 
-/// 获取分享文件信息（参考 baidupcs-go 的简洁实现）
+/// 获取分享链接信息
 pub async fn get_share_info(
     state: &Arc<AppState>,
     _share_url: &str,
@@ -201,47 +251,58 @@ pub async fn get_share_info(
     pwd: &str,
 ) -> Result<ShareFileInfo> {
     info!("📥 获取分享信息: surl={}", surl);
-
-    // Baidu 的 share/init?surl= 参数通常是不带前缀 '1' 的短码；
-    // 例如 /s/1nv3DPGX 对应 surl=nv3DPGX。
+    
+    // Step 1: 访问分享页面
     let surl_param = surl.strip_prefix('1').unwrap_or(surl);
-
     let init_url = format!("https://pan.baidu.com/share/init?surl={}", surl_param);
-
-    // Step 1: 获取 init 页面（用于建立正确的 Cookie/上下文，并提取 shareid/uk/bdstoken）
+    
+    info!("🌐 访问分享页面: {}", init_url);
+    
     let resp = state
         .client
         .get(&init_url)
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .send()
         .await?;
-
+    
     let html = resp.text().await?;
-    debug!("页面长度: {} 字节", html.len());
-
-    // Step 2: 提取 shareid 和 uk（从 HTML）
+    debug!("📄 页面长度: {} 字节", html.len());
+    
+    // Step 2: 提取 shareid 和 uk
     let (shareid, uk) = extract_share_ids(&html)?;
-    debug!("提取到: shareid={}, uk={}", shareid, uk);
-
+    debug!("✅ 提取到: shareid={}, uk={}", shareid, uk);
+    
     // Step 3: 提取 bdstoken
     let bdstoken = extract_bdstoken(&html);
-    debug!("bdstoken: {}", bdstoken);
-
-    // ✅ Step 4: 如果有提取码，先验证
+    debug!("🔑 bdstoken: {}", bdstoken);
+    
+    // Step 4: 验证提取码
     if !pwd.is_empty() {
-        verify_password(state, surl_param, pwd, &bdstoken).await?;
+        info!("🔐 验证提取码...");
+        verify_password(state.clone(), surl_param, pwd, &bdstoken).await?;
         info!("✅ 提取码验证成功");
     }
-
-    // Step 5: 获取文件列表（支持文件和文件夹）
-    let (fs_ids, filenames) = get_file_list(state, &shareid, &uk, surl_param, &bdstoken).await?;
+    
+    // Step 5: 获取文件列表
+    info!("📋 获取文件列表...");
+    let (fs_ids, filenames) = get_file_list(
+        state.clone(),
+        &shareid,
+        &uk,
+        surl_param,
+        &bdstoken,
+    )
+    .await?;
     
     if fs_ids.is_empty() {
-        return Err(anyhow!("未获取到文件列表"));
+        return Err(anyhow!("未找到可转存的文件"));
     }
-
-    info!("✅ 获取到 {} 个文件", fs_ids.len());
-
+    
+    info!("✅ 找到 {} 个文件", fs_ids.len());
+    for (i, name) in filenames.iter().enumerate() {
+        info!("  {}. {}", i + 1, name);
+    }
+    
     Ok(ShareFileInfo {
         shareid,
         uk,
@@ -251,15 +312,15 @@ pub async fn get_share_info(
     })
 }
 
-/// ✅ 验证提取码（参考 baidupcs-go）
+/// 验证提取码
 async fn verify_password(
-    state: &Arc<AppState>,
+    state: Arc<AppState>,
     surl: &str,
     pwd: &str,
     bdstoken: &str,
 ) -> Result<()> {
     let url = "https://pan.baidu.com/share/verify";
-
+    
     let params = [
         ("surl", surl),
         ("pwd", pwd),
@@ -270,9 +331,9 @@ async fn verify_password(
         ("clienttype", "0"),
         ("bdstoken", bdstoken),
     ];
-
-    debug!("验证提取码: surl={}", surl);
-
+    
+    debug!("🔐 提取码验证: surl={}", surl);
+    
     let resp = state.client
         .post(url)
         .header("User-Agent", "Mozilla/5.0")
@@ -280,108 +341,105 @@ async fn verify_password(
         .form(&params)
         .send()
         .await?;
-
+    
     let text = resp.text().await?;
-    debug!("verify 响应: {}", text);
-
+    debug!("🔑 verify 响应: {}", text);
+    
     #[derive(Deserialize)]
     struct VerifyResponse {
         errno: i32,
     }
-
+    
     let result: VerifyResponse = serde_json::from_str(&text)?;
-
+    
     if result.errno != 0 {
-        return Err(anyhow!("提取码验证失败: errno={}", result.errno));
+        return Err(anyhow!("提取码错误, errno: {}", result.errno));
     }
-
+    
     Ok(())
 }
 
-/// 获取文件列表（参考 baidupcs-go）
+/// 获取文件列表
+/// 
+/// 调用 share/list API 获取分享链接中的所有文件
 async fn get_file_list(
-    state: &Arc<AppState>,
+    state: Arc<AppState>,
     shareid: &str,
     uk: &str,
     surl: &str,
     bdstoken: &str,
 ) -> Result<(Vec<u64>, Vec<String>)> {
-    // share/list 对参数较敏感：shorturl/root/bdstoken 缺失时常见 errno=-7
     let url = format!(
         "https://pan.baidu.com/share/list?shareid={}&uk={}&shorturl={}&root=1&dir=%2F&page=1&num=1000&order=name&desc=1&showempty=0&web=1&channel=chunlei&clienttype=0&bdstoken={}",
         shareid, uk, surl, bdstoken
     );
-
-    debug!("调用 list API: {}", url);
-
+    
+    debug!("📡 调用 list API: {}", url);
+    
     let resp = state.client
         .get(&url)
         .header("User-Agent", "Mozilla/5.0")
         .header("Referer", format!("https://pan.baidu.com/share/init?surl={}", surl))
         .send()
         .await?;
-
+    
     let text = resp.text().await?;
-    debug!("list 响应: {}", &text[..200.min(text.len())]);
-
+    debug!("📨 list 响应: {}", &text[..200.min(text.len())]);
+    
     let res: ListResponse = serde_json::from_str(&text)
         .map_err(|e| anyhow!("解析响应失败: {}", e))?;
-
+    
     if res.errno != 0 {
-        warn!("list API 返回错误: errno={}", res.errno);
-        
-        // ✅ 提供更详细的错误信息
+        warn!("⚠️ list API errno: {}", res.errno);
         let error_msg = match res.errno {
-            -7 => "链接出错（可能需要提取码或链接已失效）",
+            -7 => "分享链接已过期或被删除",
             -9 => "提取码错误",
-            105 => "分享不存在",
-            110 => "分享已被取消",
+            105 => "分享链接不存在",
+            110 => "分享链接已失效",
             _ => "未知错误",
         };
-        
-        return Err(anyhow!("errno={}: {}", res.errno, error_msg));
+        return Err(anyhow!("获取文件列表失败: errno={}, {}", res.errno, error_msg));
     }
-
+    
     let mut fs_ids = Vec::new();
     let mut filenames = Vec::new();
     
     for file in res.list {
-        fs_ids.push(file.get_fs_id());
+        fs_ids.push(file.get_fsid());
         filenames.push(file.server_filename);
     }
-
+    
     Ok((fs_ids, filenames))
 }
 
-
-/// 从 HTML 提取 shareid 和 uk
+/// 从 HTML 中提取 shareid 和 uk
 fn extract_share_ids(html: &str) -> Result<(String, String)> {
     use regex::Regex;
-
-    // 提取 shareid
-    let shareid_re = Regex::new(r#"shareid['":\s]+(\d+)"#).unwrap();
+    
+    // share/init 页面里可能出现多个 shareid/uk，取“数字最长”的那个，避免误抓到很小的数字（如 5）
+    let shareid_re = Regex::new(r"shareid\D*?(\d+)").unwrap();
     let shareid = shareid_re
-        .captures(html)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-        .ok_or_else(|| anyhow!("未找到 shareid"))?;
+        .captures_iter(html)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+        .max_by_key(|s| s.len())
+        .ok_or_else(|| anyhow!("无法提取 shareid，页面格式可能已变化"))?;
 
-    // 提取 uk
-    let uk_re = Regex::new(r#"uk['":\s]+(\d+)"#).unwrap();
+    let uk_re = Regex::new(r"uk\D*?(\d+)").unwrap();
     let uk = uk_re
-        .captures(html)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-        .ok_or_else(|| anyhow!("未找到 uk"))?;
-
+        .captures_iter(html)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+        .max_by_key(|s| s.len())
+        .ok_or_else(|| anyhow!("无法提取 uk"))?;
+    
     Ok((shareid, uk))
 }
 
-/// 提取 bdstoken
+/// 从 HTML 中提取 bdstoken
 fn extract_bdstoken(html: &str) -> String {
     use regex::Regex;
     
-    let re = Regex::new(r#"bdstoken['":\s]+"?([a-f0-9]+)"?"#).unwrap();
+    // 匹配 bdstoken 后面的 32 位十六进制字符
+    let re = Regex::new(r"bdstoken\D*?([a-f0-9]{32})").unwrap();
     re.captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -390,12 +448,14 @@ fn extract_bdstoken(html: &str) -> String {
 </file>
 
 <file path="src/baidupcs/transfer.rs">
-//! 转存功能（参考 baidupcs-go）
+//! 百度网盘转存功能模块
+//! 
+//! 参考 baidupcs-go 实现
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 
 use crate::AppState;
 
@@ -407,7 +467,43 @@ struct TransferResult {
     show_msg: String,
 }
 
-/// 转存文件到网盘（参考 baidupcs-go 正确实现）
+/// 验证保存路径是否存在
+pub async fn verify_save_path(
+    state: Arc<AppState>,
+    path: &str,
+) -> Result<bool> {
+    info!("🔍 验证保存路径: {}", path);
+    
+    let url = format!(
+        "https://pan.baidu.com/api/list?dir={}&num=1&order=name&desc=0",
+        urlencoding::encode(path)
+    );
+    
+    let resp = state.client
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .send()
+        .await?;
+    
+    let text = resp.text().await?;
+    debug!("路径验证响应: {}", text);
+    
+    let result: serde_json::Value = serde_json::from_str(&text)?;
+    let errno = result["errno"].as_i64().unwrap_or(-1);
+    
+    if errno == 0 {
+        info!("✅ 保存路径存在");
+        Ok(true)
+    } else {
+        warn!("❌ 保存路径不存在 (errno={})", errno);
+        warn!("💡 请在百度网盘中先创建该文件夹: {}", path);
+        Ok(false)
+    }
+}
+
+/// 百度网盘转存 API
+/// 
+/// # 参考 baidupcs-go 实现
 pub async fn transfer_files(
     state: &Arc<AppState>,
     shareid: &str,
@@ -416,44 +512,70 @@ pub async fn transfer_files(
     bdstoken: &str,
     surl: &str,
 ) -> Result<()> {
-    info!("📦 开始转存 {} 个文件", fs_ids.len());
+    transferfiles(state.clone(), shareid, uk, fs_ids, bdstoken, surl).await
+}
 
-    // ✅ 关键：URL 参数完全对齐 baidupcs-go
+pub async fn transferfiles(
+    state: Arc<AppState>,
+    shareid: &str,
+    uk: &str,
+    fsids: &[u64],
+    bdstoken: &str,
+    surl: &str,
+) -> Result<()> {
+    info!("📦 开始转存 {} 个文件...", fsids.len());
+    
+    let savepath = &state.config.baidu.save_path;  // ← 改成 save_path
+    
+    // 先验证保存路径
+    if !verify_save_path(state.clone(), savepath).await? {
+        return Err(anyhow!(
+            "保存路径不存在: {}，请先在百度网盘中创建该文件夹", 
+            savepath
+        ));
+    }
+    
+    // 构建转存 URL
+    // ondup参数: newcopy(重命名), overwrite(覆盖), fail(失败)
     let url = format!(
-        "https://pan.baidu.com/share/transfer?shareid={}&from={}&ondup=newcopy&async=1&channel=chunlei&clienttype=0&web=1&bdstoken={}",
+        "https://pan.baidu.com/share/transfer?shareid={}&from={}&ondup=newcopy&channel=chunlei&clienttype=0&web=1&bdstoken={}",
         shareid, uk, bdstoken
     );
-
-    let fs_id_list = serde_json::to_string(fs_ids)?;
-    let save_path = &state.config.baidu.save_path;
+    
+    let fsidlist = serde_json::to_string(fsids)?;
     
     let params = [
-        ("fsidlist", fs_id_list.as_str()),
-        ("path", save_path.as_str()),
+        ("fsidlist", fsidlist.as_str()),
+        ("path", savepath.as_str()),
     ];
-
-    let surl_param = surl.strip_prefix('1').unwrap_or(surl);
-    let referer = format!("https://pan.baidu.com/share/init?surl={}", surl_param);
     
-    info!("=== 转存参数 ===");
-    info!("URL: {}", url);
-    info!("shareid: {}, from(uk): {}", shareid, uk);
-    info!("fsidlist: {}", fs_id_list);
-    info!("保存路径: {}", save_path);
-    info!("Referer: {}", referer);
+    // 详细日志
+    info!("📋 转存参数:");
+    info!("  └─ URL: {}", url);
+    info!("  └─ shareid: {}", shareid);
+    info!("  └─ from(uk): {}", uk);
+    info!("  └─ fsidlist: {}", fsidlist);
+    info!("  └─ 保存路径: {}", savepath);
+    info!("  └─ 重复处理: newcopy (自动重命名)");
     
-    // 先访问分享页面建立会话
-    debug!("预先访问分享页面: {}", referer);
+    let surlparam = surl.strip_prefix('1').unwrap_or(surl);
+    let referer = format!("https://pan.baidu.com/share/init?surl={}", surlparam);
+    
+    info!("  └─ Referer: {}", referer);
+    
+    // 先访问 referer 页面，确保 Cookie 正确
+    debug!("🌐 预访问 referer 页面...");
     let _ = state.client
         .get(&referer)
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .send()
         .await;
     
-    // ✅ 使用 baidupcs-go 的 User-Agent 和完整 headers
+    // 调用转存 API
+    info!("🚀 发送转存请求...");
     let resp = state.client
         .post(&url)
-        .header("User-Agent", "netdisk;2.2.51.6;netdisk;10.0.63;PC;android-android")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .header("Referer", &referer)
         .header("Host", "pan.baidu.com")
         .header("Origin", "https://pan.baidu.com")
@@ -464,77 +586,131 @@ pub async fn transfer_files(
         .form(&params)
         .send()
         .await?;
-
+    
     let status = resp.status();
-    debug!("转存响应状态: {}", status);
-
+    debug!("📡 HTTP状态码: {}", status);
+    
     let text = resp.text().await?;
-    info!("📋 转存完整响应: {}", text);
-
+    info!("📨 转存响应: {}", text);
+    
     let result: TransferResult = serde_json::from_str(&text)
         .map_err(|e| anyhow!("解析响应失败: {}, body: {}", e, text))?;
-
-    // ✅ 参考 baidupcs-go 的错误处理
+    
+    // 详细的 errno 处理
     match result.errno {
         0 => {
-            info!("✅ 转存成功 (errno=0)");
+            info!("✅ 转存成功! (errno=0)");
+            info!("📂 文件已保存至: {}", savepath);
             Ok(())
         }
         2 => {
-            if result.show_msg.contains("成功") 
-                || result.show_msg.contains("保存成功")
-                || result.show_msg.contains("转存成功") {
-                info!("✅ 转存成功: {}", result.show_msg);
+            // errno=2 有多种含义，需要详细判断
+            warn!("⚠️ errno=2 - 详细诊断:");
+            warn!("  └─ show_msg: {}", result.show_msg);
+            
+            let msg_lower = result.show_msg.to_lowercase();
+            
+            if msg_lower.contains("已经保存过") 
+                || msg_lower.contains("已存在") 
+                || msg_lower.contains("重复转存")
+                || msg_lower.contains("duplicate") {
+                info!("📁 文件已存在，转存完成");
+                info!("💡 提示: {}", result.show_msg);
                 Ok(())
-            } else if result.show_msg.contains("已存在") {
-                warn!("⚠️ API 返回'文件已存在'，可能是 Cookie 无效");
-                warn!("⚠️ BDUSS 前20字符: {}...", 
-                      &state.config.baidu.cookie_bduss.chars().take(20).collect::<String>());
-                warn!("⚠️ STOKEN 前20字符: {}...", 
-                      &state.config.baidu.cookie_stoken.chars().take(20).collect::<String>());
-                
-                Err(anyhow!(
-                    "转存失败：{}。\n\
-                    可能原因：\n\
-                    1. Cookie (BDUSS/STOKEN) 已过期，请更新 config.toml\n\
-                    2. 这是您自己的分享，无需转存\n\
-                    3. 文件确实已存在于网盘中\n\
-                    完整响应: {}",
-                    result.show_msg, text
-                ))
+            } else if msg_lower.contains("未登录") 
+                || msg_lower.contains("需要登录")
+                || msg_lower.contains("登陆")
+                || msg_lower.contains("验证")
+                || msg_lower.contains("login") {
+                error!("🔐 Cookie 失效或未登录!");
+                error!("📝 请检查 config.toml 中的:");
+                error!("   1. cookie_bduss (长度应为192字符)");
+                error!("   2. cookie_stoken (长度应为32字符)");
+                error!("💡 获取方式:");
+                error!("   1. 浏览器登录 pan.baidu.com");
+                error!("   2. F12 打开开发者工具");
+                error!("   3. Application -> Cookies -> BDUSS 和 STOKEN");
+                Err(anyhow!("Cookie失效: {}", result.show_msg))
+            } else if msg_lower.contains("路径") 
+                || msg_lower.contains("目录")
+                || msg_lower.contains("文件夹")
+                || msg_lower.contains("path") {
+                error!("📂 保存路径问题: {}", result.show_msg);
+                error!("📝 当前保存路径: {}", savepath);
+                error!("💡 请确保该文件夹在百度网盘中存在");
+                Err(anyhow!("路径错误: {}", result.show_msg))
+            } else if msg_lower.contains("权限") 
+                || msg_lower.contains("permission") {
+                error!("🚫 权限不足: {}", result.show_msg);
+                error!("💡 可能原因:");
+                error!("   1. 分享链接已失效");
+                error!("   2. 分享者设置了权限限制");
+                Err(anyhow!("权限不足: {}", result.show_msg))
             } else {
-                warn!("⚠️ errno=2 但消息不明确: {}", result.show_msg);
+                // 未知的 errno=2 错误
+                error!("❌ 未知的 errno=2 错误");
+                error!("  └─ show_msg: {}", result.show_msg);
+                error!("  └─ 完整响应: {}", text);
+                error!("💡 建议:");
+                error!("   1. 检查 Cookie 是否有效");
+                error!("   2. 尝试修改保存路径为 /apps 或 /test");
+                error!("   3. 确认分享链接有效");
                 Err(anyhow!("转存失败: {}", result.show_msg))
             }
         }
         12 => {
-            info!("✅ 转存成功 (errno=12)");
+            info!("✅ 转存完成 (errno=12)");
+            info!("💡 errno=12 通常表示文件已存在或部分成功");
             Ok(())
         }
+        -1 => {
+            error!("❌ 转存失败: 文件不存在或已删除");
+            Err(anyhow!("文件不存在"))
+        }
+        -7 => {
+            error!("❌ 转存失败: 分享链接无效或已过期");
+            Err(anyhow!("分享链接失效"))
+        }
+        -9 => {
+            error!("❌ 转存失败: 提取码错误");
+            Err(anyhow!("提取码错误"))
+        }
         -20 => {
-            Err(anyhow!("分享已失效或被取消"))
+            error!("❌ 转存失败: 保存路径不存在");
+            error!("📝 当前路径: {}", savepath);
+            error!("💡 请在百度网盘中创建该文件夹");
+            Err(anyhow!("路径不存在: {}", savepath))
+        }
+        110 => {
+            error!("❌ 转存失败: 分享链接已过期");
+            Err(anyhow!("分享已过期"))
         }
         _ => {
+            error!("❌ 转存失败");
+            error!("  └─ errno: {}", result.errno);
+            error!("  └─ show_msg: {}", result.show_msg);
+            error!("  └─ 完整响应: {}", text);
             Err(anyhow!(
-                "转存失败: errno={}, show_msg='{}', 完整响应: {}",
-                result.errno, result.show_msg, text
+                "转存失败: errno={}, {}", 
+                result.errno, 
+                result.show_msg
             ))
         }
     }
 }
 
-/// 兼容旧代码：do_transfer
+/// 批量转存（预留接口）
 pub async fn do_transfer(
     state: Arc<AppState>,
     shareid: String,
     uk: String,
-    fs_ids: Vec<u64>,
+    fsids: Vec<u64>,
     bdstoken: String,
     surl: &str,
     _savepath: &str,
 ) -> Result<Vec<u64>> {
-    transfer_files(&state, &shareid, &uk, &fs_ids, &bdstoken, surl).await?;
-    Ok(fs_ids)
+    transferfiles(state, &shareid, &uk, &fsids, &bdstoken, surl).await?;
+    Ok(fsids)
 }
 </file>
 
@@ -3453,6 +3629,32 @@ else
 fi
 
 rm -f /tmp/cookie_test.html /tmp/share_test.html
+</file>
+
+<file path="docker-compose.yml">
+version: '3.8'
+
+services:
+  app:
+    image: rust:1.91
+    container_name: pcs_dev
+    # 自动把当前目录挂载进去
+    volumes:
+      - .:/app
+    working_dir: /app
+    ports:
+      - "5200:5200"
+    # 这里配置一次，以后就不用管了
+    environment:
+      - http_proxy=http://host.docker.internal:10808
+      - https_proxy=http://host.docker.internal:10808
+      - HTTP_PROXY=http://host.docker.internal:10808
+      - HTTPS_PROXY=http://host.docker.internal:10808
+      - no_proxy=localhost,127.0.0.1,::1,rsproxy.cn,crates.io
+    # 容器启动后自动安装依赖并运行
+    # 注意：这里把 apt install 和 cargo run 连起来了
+    command: >
+      bash -c "apt-get update && apt-get install -y pkg-config libssl-dev && cargo run"
 </file>
 
 <file path="felixonmars-baidupcs-go-8a5edab282632443 (1).txt">
@@ -23874,32 +24076,6 @@ curl -X POST http://localhost:5200/api/debug/list \
 ```
 </file>
 
-<file path=".devcontainer/devcontainer.json">
-{
-  "name": "Rust Pan Server",
-  "image": "rust:1.91",
-  
-  // --- 👇 添加这一段 👇 ---
-  // 强制指定容器内的环境变量，直接指向 Windows 主机的 10808 端口
-  // 这样既覆盖了 VS Code 可能注入的错误 IP (127.0.0.1)，也不需要每次手动 export
-  "containerEnv": {
-    "http_proxy": "http://host.docker.internal:10808",
-    "https_proxy": "http://host.docker.internal:10808",
-    "HTTP_PROXY": "http://host.docker.internal:10808",
-    "HTTPS_PROXY": "http://host.docker.internal:10808",
-    "ALL_PROXY": "http://host.docker.internal:10808",
-    "NO_PROXY": "localhost,127.0.0.1,::1,rsproxy.cn,crates.io"
-  },
-  // --- 👆 添加这一段 👆 ---
-
-  "customizations": {
-    // ... 其他配置保持不变 ...
-  },
-  "remoteUser": "root",
-  "postCreateCommand": "apt-get update && apt-get install -y pkg-config libssl-dev"
-}
-</file>
-
 <file path="src/main.rs">
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
@@ -24004,6 +24180,7 @@ anyhow = "1"
 # 正则（用于提取 shareid/uk/bdstoken）
 regex = "1"
 
+urlencoding = "2.1"
 
 # 日志
 tracing = "0.1"
@@ -24015,32 +24192,6 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-</file>
-
-<file path="docker-compose.yml">
-version: '3.8'
-
-services:
-  app:
-    image: rust:1.91
-    container_name: pcs_dev
-    # 自动把当前目录挂载进去
-    volumes:
-      - .:/app
-    working_dir: /app
-    ports:
-      - "5200:5200"
-    # 这里配置一次，以后就不用管了
-    environment:
-      - http_proxy=http://host.docker.internal:10808
-      - https_proxy=http://host.docker.internal:10808
-      - HTTP_PROXY=http://host.docker.internal:10808
-      - HTTPS_PROXY=http://host.docker.internal:10808
-      - no_proxy=localhost,127.0.0.1,::1,rsproxy.cn,crates.io
-    # 容器启动后自动安装依赖并运行
-    # 注意：这里把 apt install 和 cargo run 连起来了
-    command: >
-      bash -c "apt-get update && apt-get install -y pkg-config libssl-dev && cargo run"
 </file>
 
 </files>

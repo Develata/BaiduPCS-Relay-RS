@@ -14,10 +14,14 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: Config) -> Result<Self> {
         if config.baidu.cookie_bduss.is_empty() || config.baidu.cookie_bduss.len() < 50 {
-            return Err(anyhow!("BDUSS 未配置或长度不足，请在 config.toml 中设置完整的 BDUSS"));
+            return Err(anyhow!(
+                "BDUSS 未配置或长度不足，请在 config.toml 中设置完整的 BDUSS"
+            ));
         }
         if config.baidu.cookie_stoken.is_empty() || config.baidu.cookie_stoken.len() < 30 {
-            return Err(anyhow!("STOKEN 未配置或长度不足，请在 config.toml 中设置完整的 STOKEN"));
+            return Err(anyhow!(
+                "STOKEN 未配置或长度不足，请在 config.toml 中设置完整的 STOKEN"
+            ));
         }
 
         let jar = Arc::new(Jar::default());
@@ -30,18 +34,26 @@ impl AppState {
         for domain in domains {
             let url = domain.parse::<Url>()?;
             jar.add_cookie_str(
-                &format!("BDUSS={}; Domain=.baidu.com; Path=/", config.baidu.cookie_bduss),
+                &format!(
+                    "BDUSS={}; Domain=.baidu.com; Path=/",
+                    config.baidu.cookie_bduss
+                ),
                 &url,
             );
             jar.add_cookie_str(
-                &format!("STOKEN={}; Domain=.baidu.com; Path=/", config.baidu.cookie_stoken),
+                &format!(
+                    "STOKEN={}; Domain=.baidu.com; Path=/",
+                    config.baidu.cookie_stoken
+                ),
                 &url,
             );
         }
 
         let client = Client::builder()
             .cookie_provider(jar)
-            .timeout(std::time::Duration::from_secs(config.baidu.http_timeout_secs))
+            .timeout(std::time::Duration::from_secs(
+                config.baidu.http_timeout_secs,
+            ))
             .build()?;
 
         Ok(Self { config, client })

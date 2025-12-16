@@ -3,18 +3,26 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  test:
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - run: cargo clippy -- -D warnings
+        with:
+          components: rustfmt, clippy
       - run: cargo fmt -- --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo test
+      - run: cargo build --release
 
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - run: cargo audit

@@ -8,4 +8,4 @@ pub use config::Config;
 pub use state::AppState;
 
 /// 库版本
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");  // ✅ 修复：移除了反斜杠
+pub const VERSION: &str = env!("CARGO_PKG_VERSION"); // ✅ 修复：移除了反斜杠

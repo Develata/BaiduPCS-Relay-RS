@@ -2,11 +2,7 @@ use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use baidu_direct_link::{
-    config::Config,
-    baidupcs,
-    AppState,
-};
+use baidu_direct_link::{baidupcs, config::Config, AppState};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,7 +22,9 @@ async fn main() -> Result<()> {
     if args.len() < 2 {
         return Err(anyhow!(
             "用法: {} <share_url> [pwd] [config_path]",
-            args.get(0).map(|s| s.as_str()).unwrap_or("baidu-direct-link")
+            args.first()
+                .map(|s| s.as_str())
+                .unwrap_or("baidu-direct-link")
         ));
     }
 
@@ -47,12 +45,12 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow!("无法从链接中提取 surl: {}", share_url))?;
 
     // 1) 获取分享信息
-    let info = baidupcs::get_share_info(&state, &share_url, &surl, &pwd).await?;
+    let info = baidupcs::get_share_info(state.as_ref(), &share_url, &surl, &pwd).await?;
     tracing::info!("📦 获取到 {} 个文件，开始转存...", info.fs_ids.len());
 
     // 2) 转存
     baidupcs::transfer_files(
-        &state,
+        state.as_ref(),
         &info.shareid,
         &info.uk,
         &info.fs_ids,
@@ -61,7 +59,9 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    tracing::info!("✅ 转存请求已完成，保存路径: {}", state.config.baidu.save_path);
+    tracing::info!(
+        "✅ 转存请求已完成，保存路径: {}",
+        state.config.baidu.save_path
+    );
     Ok(())
 }
-

@@ -1,8 +1,42 @@
 /target/
 config.toml
+config.local.toml
+config.*.local.toml
 *.log
 .env
+.env.*
 .DS_Store
+
+# Rust
+**/*.rs.bk
+*.pdb
+*.dSYM/
+
+# Profiling / coverage
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+coverage/
+
+# 本地分析/打包产物
+repomix-output.xml
+check.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.orig
+*.rej
+
+# Windows 资源管理器下载残留
+*:Zone.Identifier
+
+# 编辑器
+.vscode/
+.idea/
+.envrc
+.tool-versions
 
 # Token文件
 token.json

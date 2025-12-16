@@ -1,12 +1,12 @@
 //! 百度网盘转存功能模块
-//! 
+//!
 //! 参考 baidupcs-go 实现
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use std::sync::Arc;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
+use crate::config::Config;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -18,29 +18,27 @@ struct TransferResult {
 }
 
 /// 验证保存路径是否存在
-pub async fn verify_save_path(
-    state: Arc<AppState>,
-    path: &str,
-) -> Result<bool> {
+pub async fn verify_save_path(state: &AppState, path: &str) -> Result<bool> {
     info!("🔍 验证保存路径: {}", path);
-    
+
     let url = format!(
         "https://pan.baidu.com/api/list?dir={}&num=1&order=name&desc=0",
         urlencoding::encode(path)
     );
-    
-    let resp = state.client
+
+    let resp = state
+        .client
         .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .header("User-Agent", Config::browser_ua())
         .send()
         .await?;
-    
+
     let text = resp.text().await?;
     debug!("路径验证响应: {}", text);
-    
+
     let result: serde_json::Value = serde_json::from_str(&text)?;
     let errno = result["errno"].as_i64().unwrap_or(-1);
-    
+
     if errno == 0 {
         info!("✅ 保存路径存在");
         Ok(true)
@@ -52,53 +50,39 @@ pub async fn verify_save_path(
 }
 
 /// 百度网盘转存 API
-/// 
+///
 /// # 参考 baidupcs-go 实现
 pub async fn transfer_files(
-    state: &Arc<AppState>,
+    state: &AppState,
     shareid: &str,
     uk: &str,
     fs_ids: &[u64],
     bdstoken: &str,
     surl: &str,
 ) -> Result<()> {
-    transferfiles(state.clone(), shareid, uk, fs_ids, bdstoken, surl).await
-}
+    info!("📦 开始转存 {} 个文件...", fs_ids.len());
 
-pub async fn transferfiles(
-    state: Arc<AppState>,
-    shareid: &str,
-    uk: &str,
-    fsids: &[u64],
-    bdstoken: &str,
-    surl: &str,
-) -> Result<()> {
-    info!("📦 开始转存 {} 个文件...", fsids.len());
-    
-    let savepath = &state.config.baidu.save_path;  // ← 改成 save_path
-    
+    let savepath = &state.config.baidu.save_path; // ← 改成 save_path
+
     // 先验证保存路径
-    if !verify_save_path(state.clone(), savepath).await? {
+    if !verify_save_path(state, savepath).await? {
         return Err(anyhow!(
-            "保存路径不存在: {}，请先在百度网盘中创建该文件夹", 
+            "保存路径不存在: {}，请先在百度网盘中创建该文件夹",
             savepath
         ));
     }
-    
+
     // 构建转存 URL
     // ondup参数: newcopy(重命名), overwrite(覆盖), fail(失败)
     let url = format!(
         "https://pan.baidu.com/share/transfer?shareid={}&from={}&ondup=newcopy&channel=chunlei&clienttype=0&web=1&bdstoken={}",
         shareid, uk, bdstoken
     );
-    
-    let fsidlist = serde_json::to_string(fsids)?;
-    
-    let params = [
-        ("fsidlist", fsidlist.as_str()),
-        ("path", savepath.as_str()),
-    ];
-    
+
+    let fsidlist = serde_json::to_string(fs_ids)?;
+
+    let params = [("fsidlist", fsidlist.as_str()), ("path", savepath.as_str())];
+
     // 详细日志
     info!("📋 转存参数:");
     info!("  └─ URL: {}", url);
@@ -107,45 +91,50 @@ pub async fn transferfiles(
     info!("  └─ fsidlist: {}", fsidlist);
     info!("  └─ 保存路径: {}", savepath);
     info!("  └─ 重复处理: newcopy (自动重命名)");
-    
+
     let surlparam = surl.strip_prefix('1').unwrap_or(surl);
     let referer = format!("https://pan.baidu.com/share/init?surl={}", surlparam);
-    
+
     info!("  └─ Referer: {}", referer);
-    
+
     // 先访问 referer 页面，确保 Cookie 正确
     debug!("🌐 预访问 referer 页面...");
-    let _ = state.client
+    let _ = state
+        .client
         .get(&referer)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .header("User-Agent", Config::browser_ua())
         .send()
         .await;
-    
+
     // 调用转存 API
     info!("🚀 发送转存请求...");
-    let resp = state.client
+    let resp = state
+        .client
         .post(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .header("User-Agent", Config::browser_ua())
         .header("Referer", &referer)
         .header("Host", "pan.baidu.com")
         .header("Origin", "https://pan.baidu.com")
-        .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        .header(
+            "Content-Type",
+            "application/x-www-form-urlencoded; charset=UTF-8",
+        )
         .header("Accept", "application/json, text/javascript, */*; q=0.01")
         .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .header("X-Requested-With", "XMLHttpRequest")
         .form(&params)
         .send()
         .await?;
-    
+
     let status = resp.status();
     debug!("📡 HTTP状态码: {}", status);
-    
+
     let text = resp.text().await?;
     info!("📨 转存响应: {}", text);
-    
-    let result: TransferResult = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("解析响应失败: {}, body: {}", e, text))?;
-    
+
+    let result: TransferResult =
+        serde_json::from_str(&text).map_err(|e| anyhow!("解析响应失败: {}, body: {}", e, text))?;
+
     // 详细的 errno 处理
     match result.errno {
         0 => {
@@ -157,21 +146,23 @@ pub async fn transferfiles(
             // errno=2 有多种含义，需要详细判断
             warn!("⚠️ errno=2 - 详细诊断:");
             warn!("  └─ show_msg: {}", result.show_msg);
-            
+
             let msg_lower = result.show_msg.to_lowercase();
-            
-            if msg_lower.contains("已经保存过") 
-                || msg_lower.contains("已存在") 
+
+            if msg_lower.contains("已经保存过")
+                || msg_lower.contains("已存在")
                 || msg_lower.contains("重复转存")
-                || msg_lower.contains("duplicate") {
+                || msg_lower.contains("duplicate")
+            {
                 info!("📁 文件已存在，转存完成");
                 info!("💡 提示: {}", result.show_msg);
                 Ok(())
-            } else if msg_lower.contains("未登录") 
+            } else if msg_lower.contains("未登录")
                 || msg_lower.contains("需要登录")
                 || msg_lower.contains("登陆")
                 || msg_lower.contains("验证")
-                || msg_lower.contains("login") {
+                || msg_lower.contains("login")
+            {
                 error!("🔐 Cookie 失效或未登录!");
                 error!("📝 请检查 config.toml 中的:");
                 error!("   1. cookie_bduss (长度应为192字符)");
@@ -181,16 +172,16 @@ pub async fn transferfiles(
                 error!("   2. F12 打开开发者工具");
                 error!("   3. Application -> Cookies -> BDUSS 和 STOKEN");
                 Err(anyhow!("Cookie失效: {}", result.show_msg))
-            } else if msg_lower.contains("路径") 
+            } else if msg_lower.contains("路径")
                 || msg_lower.contains("目录")
                 || msg_lower.contains("文件夹")
-                || msg_lower.contains("path") {
+                || msg_lower.contains("path")
+            {
                 error!("📂 保存路径问题: {}", result.show_msg);
                 error!("📝 当前保存路径: {}", savepath);
                 error!("💡 请确保该文件夹在百度网盘中存在");
                 Err(anyhow!("路径错误: {}", result.show_msg))
-            } else if msg_lower.contains("权限") 
-                || msg_lower.contains("permission") {
+            } else if msg_lower.contains("权限") || msg_lower.contains("permission") {
                 error!("🚫 权限不足: {}", result.show_msg);
                 error!("💡 可能原因:");
                 error!("   1. 分享链接已失效");
@@ -241,8 +232,8 @@ pub async fn transferfiles(
             error!("  └─ show_msg: {}", result.show_msg);
             error!("  └─ 完整响应: {}", text);
             Err(anyhow!(
-                "转存失败: errno={}, {}", 
-                result.errno, 
+                "转存失败: errno={}, {}",
+                result.errno,
                 result.show_msg
             ))
         }
@@ -251,7 +242,7 @@ pub async fn transferfiles(
 
 /// 批量转存（预留接口）
 pub async fn do_transfer(
-    state: Arc<AppState>,
+    state: std::sync::Arc<AppState>,
     shareid: String,
     uk: String,
     fsids: Vec<u64>,
@@ -259,6 +250,6 @@ pub async fn do_transfer(
     surl: &str,
     _savepath: &str,
 ) -> Result<Vec<u64>> {
-    transferfiles(state, &shareid, &uk, &fsids, &bdstoken, surl).await?;
+    transfer_files(state.as_ref(), &shareid, &uk, &fsids, &bdstoken, surl).await?;
     Ok(fsids)
 }
