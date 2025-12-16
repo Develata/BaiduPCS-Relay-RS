@@ -36,8 +36,14 @@ pub async fn verify_save_path(state: &AppState, path: &str) -> Result<bool> {
     let text = resp.text().await?;
     debug!("路径验证响应: {}", text);
 
-    let result: serde_json::Value = serde_json::from_str(&text)?;
-    let errno = result["errno"].as_i64().unwrap_or(-1);
+    #[derive(Deserialize)]
+    struct ApiListResponse {
+        errno: i32,
+    }
+
+    let result: ApiListResponse = serde_json::from_str(&text)
+        .map_err(|e| anyhow!("路径验证响应解析失败: {}, body={}", e, text))?;
+    let errno = result.errno;
 
     if errno == 0 {
         info!("✅ 保存路径存在");

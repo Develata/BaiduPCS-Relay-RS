@@ -224,16 +224,19 @@ async fn get_file_list(
 /// 从 HTML 中提取 shareid 和 uk
 fn extract_share_ids(html: &str) -> Result<(String, String)> {
     use regex::Regex;
+    use std::sync::OnceLock;
 
     // share/init 页面里可能出现多个 shareid/uk，取“数字最长”的那个，避免误抓到很小的数字（如 5）
-    let shareid_re = Regex::new(r"shareid\D*?(\d+)").unwrap();
+    static SHAREID_RE: OnceLock<Regex> = OnceLock::new();
+    let shareid_re = SHAREID_RE.get_or_init(|| Regex::new(r"shareid\D*?(\d+)").unwrap());
     let shareid = shareid_re
         .captures_iter(html)
         .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
         .max_by_key(|s| s.len())
         .ok_or_else(|| anyhow!("无法提取 shareid，页面格式可能已变化"))?;
 
-    let uk_re = Regex::new(r"uk\D*?(\d+)").unwrap();
+    static UK_RE: OnceLock<Regex> = OnceLock::new();
+    let uk_re = UK_RE.get_or_init(|| Regex::new(r"uk\D*?(\d+)").unwrap());
     let uk = uk_re
         .captures_iter(html)
         .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
@@ -246,9 +249,11 @@ fn extract_share_ids(html: &str) -> Result<(String, String)> {
 /// 从 HTML 中提取 bdstoken
 fn extract_bdstoken(html: &str) -> String {
     use regex::Regex;
+    use std::sync::OnceLock;
 
     // 匹配 bdstoken 后面的 32 位十六进制字符
-    let re = Regex::new(r"bdstoken\D*?([a-f0-9]{32})").unwrap();
+    static BDSTOKEN_RE: OnceLock<Regex> = OnceLock::new();
+    let re = BDSTOKEN_RE.get_or_init(|| Regex::new(r"bdstoken\D*?([a-f0-9]{32})").unwrap());
     re.captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
