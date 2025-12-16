@@ -1,2 +1,0 @@
-fn(axum::extract::State<Arc<AppState>>, Query<DownloadParams>) -> impl Future<Output = impl IntoResponse> {download}
-fn(axum::extract::State<Arc<AppState>>, Query<DownloadParams>) -> impl Future<Output = impl IntoResponse> {download}: Handler<_, _>

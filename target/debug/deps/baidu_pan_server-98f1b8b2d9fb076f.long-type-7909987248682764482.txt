@@ -1,2 +1,0 @@
-fn(axum::extract::State<Arc<AppState>>, Query<DownloadParams>) -> impl Future<Output = Result<Redirect, (axum::http::StatusCode, std::string::String)>> {download}
-fn(axum::extract::State<Arc<AppState>>, Query<DownloadParams>) -> impl Future<Output = Result<Redirect, (axum::http::StatusCode, std::string::String)>> {download}: Handler<_, _>

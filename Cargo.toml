@@ -1,15 +1,46 @@
 [package]
-name = "baidu_pan_server"
-version = "0.1.0"
+name = "baidu-direct-link"
+version = "1.0.0"
 edition = "2021"
+license = "MIT"
+authors = ["Your Name <your.email@example.com>"]
+repository = "https://github.com/yourusername/baidu-direct-link"
+description = "百度网盘分享资源直链下载系统（OAuth 2.0）"
+
+[[bin]]
+name = "baidu-direct-link"
+path = "src/main.rs"
+
+[lib]
+name = "baidu_direct_link"
+path = "src/lib.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-axum = { version = "0.7", features = ["macros"] }
-reqwest = { version = "0.11", features = ["json", "cookies", "rustls-tls", "multipart"], default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs"] }
+
+# HTTP 客户端
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
+
+# 序列化
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-regex = "1"
-once_cell = "1"
+toml = "0.8"
+
+# 错误处理
 anyhow = "1"
-urlencoding = "2"
+
+# 正则（用于提取 shareid/uk/bdstoken）
+regex = "1"
+
+urlencoding = "2.1"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

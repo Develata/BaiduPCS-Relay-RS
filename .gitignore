@@ -1,0 +1,9 @@
+/target/
+config.toml
+*.log
+.env
+.DS_Store
+
+# Token文件
+token.json
+*.encrypted
