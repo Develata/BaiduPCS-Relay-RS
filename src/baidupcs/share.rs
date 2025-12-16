@@ -116,18 +116,20 @@ pub async fn get_share_info(
 
 /// 验证提取码
 async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str) -> Result<()> {
-    let url = "https://pan.baidu.com/share/verify";
+    // 更贴近浏览器/baidupcs-go：verify 的大部分参数在 query string，表单仅提交 pwd/vcode。
+    // 少带或带错参数/请求头时，百度有时也会返回 errno=-12（看起来像“提取码错误”）。
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let url = format!(
+        "https://pan.baidu.com/share/verify?surl={}&t={}&channel=chunlei&web=1&app_id=250528&clienttype=0&bdstoken={}",
+        surl,
+        ts_ms,
+        bdstoken
+    );
 
-    let params = [
-        ("surl", surl),
-        ("pwd", pwd),
-        ("vcode", ""),
-        ("vcode_str", ""),
-        ("web", "1"),
-        ("channel", "chunlei"),
-        ("clienttype", "0"),
-        ("bdstoken", bdstoken),
-    ];
+    let form = [("pwd", pwd), ("vcode", ""), ("vcode_str", "")];
 
     debug!("🔐 提取码验证: surl={}", surl);
 
@@ -139,7 +141,9 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
             "Referer",
             format!("https://pan.baidu.com/share/init?surl={}", surl),
         )
-        .form(&params)
+        .header("Origin", "https://pan.baidu.com")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .form(&form)
         .send()
         .await?;
 
@@ -149,12 +153,28 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
     #[derive(Deserialize)]
     struct VerifyResponse {
         errno: i32,
+        #[serde(default)]
+        err_msg: String,
+        #[serde(default)]
+        request_id: u64,
     }
 
-    let result: VerifyResponse = serde_json::from_str(&text)?;
+    let result: VerifyResponse = serde_json::from_str(&text)
+        .map_err(|e| anyhow!("解析 verify 响应失败: {} (body={})", e, text))?;
 
     if result.errno != 0 {
-        return Err(anyhow!("提取码错误, errno: {}", result.errno));
+        let hint = match result.errno {
+            -12 => "提取码错误，或验证请求被百度拒绝（常见于参数/请求头不符合预期、风控/频控）",
+            -20 => "验证次数过多，请稍后再试",
+            _ => "验证失败",
+        };
+        return Err(anyhow!(
+            "{} (errno={}, request_id={}, err_msg={})",
+            hint,
+            result.errno,
+            result.request_id,
+            result.err_msg
+        ));
     }
 
     Ok(())
