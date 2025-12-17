@@ -3,6 +3,8 @@ config.toml
 config.local.toml
 config.*.local.toml
 *.log
+*.log.*
+.logs/
 .env
 .env.*
 .DS_Store
@@ -23,11 +25,18 @@ coverage/
 repomix-output.xml
 check.log
 *.tmp
+*.temp
 *.swp
 *.swo
 *.bak
+*.bak.*
 *.orig
 *.rej
+
+# docker & 容器相关本地文件
+docker-compose.override.yml
+docker-compose.local.yml
+share_page.html
 
 # Windows 资源管理器下载残留
 *:Zone.Identifier
@@ -41,3 +50,4 @@ check.log
 # Token文件
 token.json
 *.encrypted
+
