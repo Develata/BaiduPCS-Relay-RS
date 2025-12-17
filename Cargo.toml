@@ -3,14 +3,24 @@ name = "baidu-direct-link"
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
-description = "百度网盘分享链接转存 CLI（基于 BDUSS/STOKEN）"
+description = "百度网盘分享链接转直链"
 readme = "README.md"
-keywords = ["baidu", "baidupan", "pan", "transfer", "cli"]
+keywords = ["baidu", "baidupan", "pan", "direct-link", "cli"]
 categories = ["command-line-utilities"]
+default-run = "baidu-web-server" 
 
 [[bin]]
 name = "baidu-direct-link"
 path = "src/main.rs"
+
+# ✅ 新增 Web 服务器
+[[bin]]
+name = "baidu-web-server"
+path = "src/bin/web_server.rs"
+
+[[bin]]
+name = "test-direct-link"
+path = "src/bin/test_direct_link.rs"
 
 [lib]
 name = "baidu_direct_link"
@@ -18,27 +28,27 @@ path = "src/lib.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-
-# HTTP 客户端
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
-
-# 序列化
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-
-# 错误处理
 anyhow = "1"
-
-# 正则（用于提取 shareid/uk/bdstoken）
 regex = "1"
-
 urlencoding = "2.1"
-
-# 日志
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
 
+# ✅ Web 框架依赖
+axum = { version = "0.7", optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.5", features = ["cors"], optional = true }
+
+[features]
+default = ["web"]
+web = ["axum", "tower", "tower-http"]
 
 [profile.release]
 opt-level = 3

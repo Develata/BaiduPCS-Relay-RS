@@ -19,15 +19,21 @@
             background: white;
             border-radius: 20px;
             padding: 40px;
-            max-width: 600px;
+            max-width: 800px;
             width: 100%;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }
         h1 {
             color: #667eea;
-            margin-bottom: 30px;
+            margin-bottom: 10px;
             text-align: center;
             font-size: 2em;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
         }
         .form-group {
             margin-bottom: 20px;
@@ -68,46 +74,125 @@
         button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+            transform: none;
         }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+            color: #667eea;
+            font-size: 16px;
+        }
+        .loading.show { display: block; }
         .result {
             margin-top: 20px;
-            padding: 15px;
-            border-radius: 8px;
             display: none;
         }
+        .result.show { display: block; }
         .success {
             background: #d4edda;
-            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
             border: 1px solid #c3e6cb;
         }
         .error {
             background: #f8d7da;
             color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
             border: 1px solid #f5c6cb;
         }
         .file-item {
             background: #f8f9fa;
-            padding: 10px;
+            padding: 15px;
             margin: 10px 0;
             border-radius: 6px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
         }
-        .download-btn {
-            padding: 8px 16px;
+        .file-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 15px;
+        }
+        .file-link {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            word-break: break-all;
+            font-size: 11px;
+            font-family: monospace;
+            border: 1px solid #e0e0e0;
+            margin-bottom: 12px;
+            max-height: 80px;
+            overflow-y: auto;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .copy-btn {
+            flex: 1;
+            min-width: 120px;
+            padding: 10px 16px;
             background: #667eea;
             color: white;
-            text-decoration: none;
+            border: none;
             border-radius: 4px;
+            cursor: pointer;
             font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover {
+            background: #5568d3;
+            transform: translateY(-1px);
+        }
+        .download-btn {
+            background: #28a745;
+        }
+        .download-btn:hover {
+            background: #218838;
+        }
+        .download-tip {
+            margin-top: 10px;
+            padding: 10px;
+            background: #fff3cd;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #856404;
+        }
+        .progress-bar {
+            display: none;
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .progress-bar.show {
+            display: block;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔗 百度网盘直链转换</h1>
-        <form action="/api/convert" method="post">
+        <p class="subtitle">分享链接 → 自动转存 → 下载直链</p>
+        
+        <form id="convertForm">
             <div class="form-group">
                 <label>访问密码</label>
                 <input type="password" name="token" placeholder="请输入访问密码" required>
@@ -122,6 +207,189 @@
             </div>
             <button type="submit">开始转换</button>
         </form>
+
+        <div class="loading">⏳ 正在转换，预计需要 15-30 秒...</div>
+
+        <div id="result" class="result"></div>
     </div>
+
+    <script>
+        document.getElementById('convertForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const form = e.target;
+            const loading = document.querySelector('.loading');
+            const result = document.getElementById('result');
+            const btn = form.querySelector('button');
+            
+            const data = {
+                token: form.token.value,
+                link: form.link.value.trim(),
+                pwd: form.pwd.value.trim()
+            };
+            
+            loading.classList.add('show');
+            result.classList.remove('show');
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/convert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const res = await response.json();
+                
+                if (res.success && res.links) {
+                    result.innerHTML = `
+                        <div class="success">
+                            <h3>✅ 成功获取 ${res.links.length} 个下载链接</h3>
+                            ${res.links.map((file, i) => `
+                                <div class="file-item">
+                                    <div class="file-name">📄 ${escapeHtml(file.filename)}</div>
+                                    <div class="file-link" id="link-${i}">${escapeHtml(file.download_url)}</div>
+                                    <div class="btn-group">
+                                        <button class="copy-btn" onclick="copyLink(${i})">📋 复制链接</button>
+                                        <button class="copy-btn download-btn" onclick="directDownload(${i}, '${escapeHtml(file.filename).replace(/'/g, "\\'")}')">⬇️ 直接下载</button>
+                                    </div>
+                                    <div class="progress-bar" id="progress-${i}">
+                                        <div class="progress-fill" id="progress-fill-${i}">0%</div>
+                                    </div>
+                                    <div class="download-tip">
+                                        💡 提示：直接下载可能较慢，建议使用 IDM、aria2 等下载工具配合"复制链接"功能
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    result.innerHTML = `
+                        <div class="error">
+                            <h3>❌ 转换失败</h3>
+                            <p>${escapeHtml(res.error || '未知错误')}</p>
+                        </div>
+                    `;
+                }
+                
+                result.classList.add('show');
+            } catch (error) {
+                result.innerHTML = `
+                    <div class="error">
+                        <h3>❌ 网络错误</h3>
+                        <p>${escapeHtml(error.message)}</p>
+                    </div>
+                `;
+                result.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                btn.disabled = false;
+            }
+        });
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function copyLink(index) {
+            const element = document.getElementById('link-' + index);
+            const text = element.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                alert('✅ 链接已复制到剪贴板！\n\n可以使用 IDM、aria2 等工具下载');
+            }).catch(() => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('✅ 链接已复制到剪贴板！');
+            });
+        }
+
+        async function directDownload(index, filename) {
+            const element = document.getElementById('link-' + index);
+            const url = element.textContent;
+            const progressBar = document.getElementById('progress-' + index);
+            const progressFill = document.getElementById('progress-fill-' + index);
+            
+            progressBar.classList.add('show');
+            progressFill.style.width = '0%';
+            progressFill.textContent = '准备下载...';
+
+            try {
+                // 通过后端代理下载
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url, filename: filename })
+                });
+
+                if (!response.ok) {
+                    throw new Error('下载失败: ' + response.statusText);
+                }
+
+                // 获取文件大小
+                const contentLength = response.headers.get('content-length');
+                const total = parseInt(contentLength, 10);
+                let loaded = 0;
+
+                // 使用 ReadableStream 读取响应
+                const reader = response.body.getReader();
+                const chunks = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) break;
+                    
+                    chunks.push(value);
+                    loaded += value.length;
+                    
+                    // 更新进度条
+                    if (total) {
+                        const percent = Math.round((loaded / total) * 100);
+                        progressFill.style.width = percent + '%';
+                        progressFill.textContent = percent + '%';
+                    } else {
+                        progressFill.textContent = '下载中... ' + formatBytes(loaded);
+                    }
+                }
+
+                // 合并所有数据块
+                const blob = new Blob(chunks);
+                
+                // 创建下载链接
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(downloadUrl);
+
+                progressFill.textContent = '✅ 下载完成';
+                setTimeout(() => {
+                    progressBar.classList.remove('show');
+                }, 2000);
+
+            } catch (error) {
+                progressFill.textContent = '❌ 下载失败';
+                progressFill.style.background = '#dc3545';
+                alert('❌ 下载失败: ' + error.message + '\n\n建议：\n1. 复制链接使用专业下载工具\n2. 或稍后重试');
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+    </script>
 </body>
 </html>

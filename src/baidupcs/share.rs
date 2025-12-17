@@ -61,7 +61,6 @@ pub async fn get_share_info(
 ) -> Result<ShareFileInfo> {
     info!("📥 获取分享信息: surl={}", surl);
 
-    // Step 1: 访问分享页面
     let surl_param = surl.strip_prefix('1').unwrap_or(surl);
     let init_url = format!("https://pan.baidu.com/share/init?surl={}", surl_param);
 
@@ -77,22 +76,24 @@ pub async fn get_share_info(
     let html = resp.text().await?;
     debug!("📄 页面长度: {} 字节", html.len());
 
-    // Step 2: 提取 shareid 和 uk
     let (shareid, uk) = extract_share_ids(&html)?;
     debug!("✅ 提取到: shareid={}, uk={}", shareid, uk);
 
-    // Step 3: 提取 bdstoken
     let bdstoken = extract_bdstoken(&html);
     debug!("🔑 bdstoken: {}", bdstoken);
 
-    // Step 4: 验证提取码
+    // ✅ 如果有提取码，先验证
     if !pwd.is_empty() {
         info!("🔐 验证提取码...");
         verify_password(state, surl_param, pwd, &bdstoken).await?;
         info!("✅ 提取码验证成功");
+        
+        // ✅ 等待 Cookie 生效
+        info!("⏳ 等待 Cookie 生效...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
-    // Step 5: 获取文件列表
+    // 获取文件列表
     info!("📋 获取文件列表...");
     let (fs_ids, filenames) = get_file_list(state, &shareid, &uk, surl_param, &bdstoken).await?;
 
@@ -114,14 +115,15 @@ pub async fn get_share_info(
     })
 }
 
+
+/// 验证提取码
 /// 验证提取码
 async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str) -> Result<()> {
-    // 更贴近浏览器/baidupcs-go：verify 的大部分参数在 query string，表单仅提交 pwd/vcode。
-    // 少带或带错参数/请求头时，百度有时也会返回 errno=-12（看起来像“提取码错误”）。
     let ts_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
+    
     let url = format!(
         "https://pan.baidu.com/share/verify?surl={}&t={}&channel=chunlei&web=1&app_id=250528&clienttype=0&bdstoken={}",
         surl,
@@ -129,23 +131,35 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
         bdstoken
     );
 
-    let form = [("pwd", pwd), ("vcode", ""), ("vcode_str", "")];
+    let form = [
+        ("pwd", pwd),
+        ("vcode", ""),
+        ("vcode_str", "")
+    ];
 
-    debug!("🔐 提取码验证: surl={}", surl);
+    debug!("🔐 提取码验证: surl={}, pwd={}", surl, pwd);
 
     let resp = state
         .client
-        .post(url)
+        .post(&url)
         .header("User-Agent", Config::browser_ua())
-        .header(
-            "Referer",
-            format!("https://pan.baidu.com/share/init?surl={}", surl),
-        )
+        .header("Referer", format!("https://pan.baidu.com/share/init?surl={}", surl))
         .header("Origin", "https://pan.baidu.com")
         .header("X-Requested-With", "XMLHttpRequest")
+        .header("Accept", "application/json, text/javascript, */*; q=0.01")
+        .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .form(&form)
         .send()
         .await?;
+
+    // ✅ 关键：检查响应头中的 Set-Cookie
+    let cookies = resp.headers().get_all("set-cookie");
+    for cookie in cookies {
+        if let Ok(cookie_str) = cookie.to_str() {
+            debug!("🍪 收到 Cookie: {}", cookie_str);
+            // reqwest 的 cookie_store 会自动保存这些 Cookie
+        }
+    }
 
     let text = resp.text().await?;
     debug!("🔑 verify 响应: {}", text);
@@ -164,7 +178,7 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
 
     if result.errno != 0 {
         let hint = match result.errno {
-            -12 => "提取码错误，或验证请求被百度拒绝（常见于参数/请求头不符合预期、风控/频控）",
+            -12 => "提取码错误",
             -20 => "验证次数过多，请稍后再试",
             _ => "验证失败",
         };
@@ -177,8 +191,14 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
         ));
     }
 
+    info!("✅ 提取码验证成功");
+    
+    // ✅ 等待一下，确保 Cookie 生效
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
     Ok(())
 }
+
 
 /// 获取文件列表
 ///
