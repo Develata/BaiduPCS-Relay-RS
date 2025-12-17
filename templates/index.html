@@ -248,7 +248,7 @@
                             ${res.links.map((file, i) => `
                                 <div class="file-item">
                                     <div class="file-name">📄 ${escapeHtml(file.filename)}</div>
-                                    <div class="file-link" id="link-${i}">${escapeHtml(file.download_url)}</div>
+                                     <div class="file-link" id="link-${i}">${escapeHtml(window.location.origin + file.download_url)}</div>
                                     <div class="btn-group">
                                         <button class="copy-btn" onclick="copyLink(${i})">📋 复制链接</button>
                                         <button class="copy-btn download-btn" onclick="directDownload(${i}, '${escapeHtml(file.filename).replace(/'/g, "\\'")}')">⬇️ 直接下载</button>
