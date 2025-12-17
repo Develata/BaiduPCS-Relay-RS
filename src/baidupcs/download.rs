@@ -1,4 +1,4 @@
-//! 获取百度网盘下载直链
+//! 获取百度网盘下载直链（基于 OpenList 方案）
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -7,26 +7,7 @@ use tracing::{debug, info, warn};
 use crate::config::Config;
 use crate::AppState;
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DownloadResponse {
-    errno: i32,
-    #[serde(default)]
-    list: Vec<DownloadItem>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DownloadItem {
-    #[serde(rename = "fs_id")]
-    fs_id: u64,
-    #[serde(default)]
-    dlink: String,
-    #[serde(default)]
-    filename: String,
-}
-
-/// 获取文件下载直链（主入口）
+/// 获取文件下载直链（主入口）- OpenList 方案
 pub async fn get_download_links(
     state: &AppState,
     fs_ids: &[u64],
@@ -35,37 +16,27 @@ pub async fn get_download_links(
         return Err(anyhow!("fs_ids 不能为空"));
     }
 
-    info!("🔗 获取 {} 个文件的下载直链...", fs_ids.len());
+    info!("🔗 获取 {} 个文件的下载直链（OpenAPI 方式）...", fs_ids.len());
 
-    // ✅ 直接使用逐个获取（PCS API）
+    let access_token = get_or_refresh_access_token(state).await?;
     let mut all_links = Vec::new();
+
     for (i, fs_id) in fs_ids.iter().enumerate() {
         info!("📥 [{}/{}] 获取 fs_id={} 的直链...", i + 1, fs_ids.len(), fs_id);
-        
-        // 先通过 list API 获取文件路径
-        match get_file_path_by_fsid(state, *fs_id).await {
-            Ok((path, filename)) => {
-                info!("   文件路径: {}", path);
-                
-                // 再通过路径获取直链
-                match get_download_link_by_path(state, &path).await {
-                    Ok(dlink) => {
-                        info!("✅ {}", filename);
-                        all_links.push((filename, dlink));
-                    }
-                    Err(e) => {
-                        warn!("⚠️ 获取 {} 的直链失败: {}", filename, e);
-                    }
-                }
+
+        // ✅ 改这里：加上 _internal
+        match get_download_link_by_fsid_internal(state, *fs_id, &access_token).await {
+            Ok((filename, url)) => {
+                info!("✅ {}", filename);
+                all_links.push((filename, url));
             }
             Err(e) => {
-                warn!("⚠️ 获取 fs_id={} 的路径失败: {}", fs_id, e);
+                warn!("⚠️ 获取 fs_id={} 的直链失败: {}", fs_id, e);
             }
         }
 
-        // 避免请求过快
         if i < fs_ids.len() - 1 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
     }
 
@@ -77,106 +48,101 @@ pub async fn get_download_links(
     Ok(all_links)
 }
 
-/// 通过 fs_id 获取文件路径
-async fn get_file_path_by_fsid(
+pub async fn get_download_link_by_fsid_internal(
     state: &AppState,
     fs_id: u64,
+    access_token: &str,
 ) -> Result<(String, String)> {
-    // 遍历目录寻找对应的 fs_id
-    let path = &state.config.baidu.save_path;
-    
     let url = format!(
-        "https://pan.baidu.com/api/list?dir={}&num=1000&order=time&desc=1",
-        urlencoding::encode(path)
+        "https://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas&fsids=[{}]&dlink=1&access_token={}",
+        fs_id,
+        urlencoding::encode(access_token)
     );
+
+    debug!("📡 filemetas: fsid={}", fs_id);
 
     let resp = state
         .client
         .get(&url)
-        .header("User-Agent", Config::browser_ua())
+        .header("User-Agent", "pan.baidu.com")
         .send()
         .await?;
 
+    let status = resp.status();
+    let text = resp.text().await?;
+
+    debug!("📨 filemetas 响应 (status={}): {}", status, &text[..text.len().min(300)]);
+
     #[derive(Deserialize)]
-    struct ListResult {
+    struct FileMetasResponse {
         errno: i32,
         #[serde(default)]
-        list: Vec<FileInfo>,
+        list: Vec<FileMetaItem>,
     }
 
     #[derive(Deserialize)]
-    struct FileInfo {
-        fs_id: u64,
-        path: String,
-        server_filename: String,
+    struct FileMetaItem {
+        #[serde(default)]
+        dlink: String,
+        #[serde(default)]
+        filename: String,
     }
 
-    let result: ListResult = resp.json().await?;
+    let result: FileMetasResponse = serde_json::from_str(&text)
+        .map_err(|e| anyhow!("解析 filemetas 失败: {}, body: {}", e, text))?;
 
     if result.errno != 0 {
-        return Err(anyhow!("列举失败: errno={}", result.errno));
+        return Err(anyhow!("filemetas errno={}", result.errno));
     }
 
-    for file in result.list {
-        if file.fs_id == fs_id {
-            return Ok((file.path, file.server_filename));
-        }
+    let item = result.list.first()
+        .ok_or_else(|| anyhow!("filemetas 未返回数据"))?;
+
+    if item.dlink.is_empty() {
+        return Err(anyhow!("dlink 为空"));
     }
 
-    Err(anyhow!("未找到 fs_id={}", fs_id))
-}
+    let full_url = format!("{}&access_token={}", item.dlink, urlencoding::encode(access_token));
 
-/// 通过文件路径获取下载直链（使用 PCS API）
-pub async fn get_download_link_by_path(
-    state: &AppState,
-    path: &str,
-) -> Result<String> {
-    // 使用 PCS API
-    let url = format!(
-        "https://pcs.baidu.com/rest/2.0/pcs/file?method=locatedownload&app_id=250528&path={}",
-        urlencoding::encode(path)
-    );
+    debug!("🔗 请求 302 跳转...");
 
-    debug!("📡 PCS API: {}", url);
-
-    let resp = state
+    let res = state
         .client
-        .get(&url)
-        .header("User-Agent", Config::app_ua())  // ✅ 使用 App UA
+        .head(&full_url)
+        .header("User-Agent", "pan.baidu.com")
         .send()
         .await?;
 
-    let text = resp.text().await?;
-    debug!("📨 PCS 响应: {}", &text[..200.min(text.len())]);
+    let final_url = if res.status() == 302 {
+        res.headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| anyhow!("302 但未返回 Location"))?
+            .to_string()
+    } else {
+        full_url
+    };
 
-    #[derive(Deserialize)]
-    struct PcsResponse {
-        #[serde(default)]
-        error_code: i32,
-        #[serde(default)]
-        urls: Vec<UrlInfo>,
-    }
-
-    #[derive(Deserialize)]
-    struct UrlInfo {
-        url: String,
-    }
-
-    let result: PcsResponse = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("解析失败: {}, body: {}", e, text))?;
-
-    if result.error_code != 0 {
-        return Err(anyhow!("PCS API 失败: error_code={}", result.error_code));
-    }
-
-    if let Some(url_info) = result.urls.first() {
-        return Ok(url_info.url.clone());
-    }
-
-    Err(anyhow!("未返回下载链接"))
+    Ok((item.filename.clone(), final_url))
 }
 
-/// 列举目录获取 fs_id
+async fn get_or_refresh_access_token(state: &AppState) -> Result<String> {
+    let opencfg = &state.config.baidu_open;
+
+    if !opencfg.access_token.is_empty() {
+        return Ok(opencfg.access_token.clone());
+    }
+
+    if !opencfg.refresh_token.is_empty() {
+        info!("⚠️ access_token 为空，使用 refresh_token 刷新...");
+        let token = crate::baidupcs::openapi::refresh_token(state).await?;
+        info!("✅ 已刷新 access_token (长度: {})", token.len());
+        return Ok(token);
+    }
+
+    Err(anyhow!("未配置 access_token 或 refresh_token"))
+}
+
 pub async fn list_directory_fsids(state: &AppState, path: &str) -> Result<Vec<u64>> {
     let url = format!(
         "https://pan.baidu.com/api/list?dir={}&num=100&order=time&desc=1",
@@ -193,7 +159,6 @@ pub async fn list_directory_fsids(state: &AppState, path: &str) -> Result<Vec<u6
         .await?;
 
     let text = resp.text().await?;
-    debug!("📨 list 响应: {}", &text[..500.min(text.len())]);
 
     #[derive(Deserialize)]
     struct ListResult {
@@ -224,47 +189,84 @@ pub async fn list_directory_fsids(state: &AppState, path: &str) -> Result<Vec<u6
     Ok(result.list.into_iter().map(|f| f.fs_id).collect())
 }
 
-/// 完整流程：分享链接 → 转存 → 获取直链
+/// 完整流程：分享链接 → 转存 → 获取 fsid（不获取直链）
 pub async fn share_to_direct_link(
     state: &AppState,
     share_url: &str,
     pwd: &str,
-) -> Result<Vec<(String, String)>> {
+) -> Result<Vec<(u64, String)>> {
     use crate::baidupcs;
 
     info!("🚀 处理分享链接: {}", share_url);
 
-    // 1. 提取 surl
     let surl = baidupcs::extract_surl(share_url)
         .ok_or_else(|| anyhow!("无法提取 surl"))?;
 
-    // 2. 获取分享信息
     let info = baidupcs::get_share_info(state, share_url, &surl, pwd).await?;
     info!("📦 找到 {} 个文件", info.fs_ids.len());
 
-    // 3. 转存到网盘
     baidupcs::transfer_files(state, &info.shareid, &info.uk, &info.fs_ids, &info.bdstoken, &surl).await?;
 
-    // 4. 等待转存完成
     info!("⏳ 等待文件转存完成...");
     tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
 
-    // 5. 列举目录获取转存后的文件
     info!("📋 列举转存目录...");
-    let saved_fs_ids = list_directory_fsids(state, &state.config.baidu.save_path).await?;
+    let files = list_directory_files(state, &state.config.baidu.save_path).await?;
 
-    if saved_fs_ids.is_empty() {
+    if files.is_empty() {
         return Err(anyhow!("转存后未找到文件"));
     }
 
-    info!("✅ 找到 {} 个转存后的文件", saved_fs_ids.len());
+    info!("✅ 找到 {} 个转存后的文件", files.len());
 
-    // 6. 只获取最新的 N 个文件的直链
     let target_count = info.fs_ids.len();
-    let target_fs_ids: Vec<u64> = saved_fs_ids.into_iter().take(target_count).collect();
+    let target_files: Vec<(u64, String)> = files.into_iter().take(target_count).collect();
 
-    info!("🎯 准备获取 {} 个文件的直链", target_fs_ids.len());
+    info!("🎯 准备返回 {} 个文件的 fsid", target_files.len());
 
-    // 7. 获取下载直链
-    get_download_links(state, &target_fs_ids).await
+    Ok(target_files)
+}
+
+/// 列举目录获取 (fsid, filename) 列表
+pub async fn list_directory_files(state: &AppState, path: &str) -> Result<Vec<(u64, String)>> {
+    let url = format!(
+        "https://pan.baidu.com/api/list?dir={}&num=100&order=time&desc=1",
+        urlencoding::encode(path)
+    );
+
+    debug!("📡 列举目录: {}", path);
+
+    let resp = state
+        .client
+        .get(&url)
+        .header("User-Agent", Config::browser_ua())
+        .send()
+        .await?;
+
+    let text = resp.text().await?;
+
+    #[derive(Deserialize)]
+    struct ListResult {
+        errno: i32,
+        #[serde(default)]
+        list: Vec<FileInfo>,
+    }
+
+    #[derive(Deserialize)]
+    struct FileInfo {
+        fs_id: u64,
+        #[serde(default)]
+        server_filename: String,
+    }
+
+    let result: ListResult = serde_json::from_str(&text)
+        .map_err(|e| anyhow!("解析列举响应失败: {}, body: {}", e, text))?;
+
+    if result.errno != 0 {
+        return Err(anyhow!("列举目录失败: errno={}", result.errno));
+    }
+
+    info!("📁 目录中共有 {} 个文件", result.list.len());
+
+    Ok(result.list.into_iter().map(|f| (f.fs_id, f.server_filename)).collect())
 }
