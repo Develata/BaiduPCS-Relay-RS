@@ -18,12 +18,15 @@
 
 ### 方式一：使用二进制（推荐）
 
-#### Linux / macOS / Windows (WSL)
+> 本版本 Release 提供的预编译二进制以 Linux x86_64 为主；其他平台建议使用“从源码编译”或 Docker（从源码运行）。
+
+#### Linux x86_64
 
 ```bash
 # 下载二进制文件
 wget https://github.com/Develata/BaiduPCS-Relay-RS/releases/download/v1.0.0/baidu-direct-link-linux-x86_64
-chmod +x baidu-direct-link-linux-x86_64
+wget https://github.com/Develata/BaiduPCS-Relay-RS/releases/download/v1.0.0/baidu-web-server-linux-x86_64
+chmod +x baidu-direct-link-linux-x86_64 baidu-web-server-linux-x86_64
 
 # 配置
 cp config.example.toml config.toml
@@ -36,20 +39,19 @@ cp config.example.toml config.toml
 ./baidu-web-server-linux-x86_64
 ```
 
-#### macOS (Apple Silicon)
+### 方式二：使用 Docker（从源码运行）
+
+仓库提供 docker-compose.yml，用于在容器内从源码启动（适合本地开发/快速试跑）。
 
 ```bash
-wget https://github.com/Develata/BaiduPCS-Relay-RS/releases/download/v1.0.0/baidu-direct-link-macos-aarch64
-chmod +x baidu-direct-link-macos-aarch64
-```
+git clone https://github.com/Develata/BaiduPCS-Relay-RS.git
+cd BaiduPCS-Relay-RS
 
-### 方式二：使用 Docker
+cp config.example.toml config.toml
+# 编辑 config.toml，填入 BDUSS/STOKEN
 
-```bash
-docker run -d \
-  -p 5200:5200 \
-  -v $(pwd)/config.toml:/app/config.toml:ro \
-  ghcr.io/develata/baidupcs-relay-rs:v1.0.0
+docker compose up --build
+# Web 服务默认监听 http://localhost:5200
 ```
 
 ### 方式三：从源码编译
@@ -87,12 +89,6 @@ sign_secret = "your-sign-secret"
 |-----|------|------|------|
 | Linux x86_64 | `baidu-direct-link-linux-x86_64` | 5.7M | CLI 模式 |
 | Linux x86_64 | `baidu-web-server-linux-x86_64` | 7.0M | Web 服务器 |
-| macOS Intel | `baidu-direct-link-macos-x86_64` | 5.5M | CLI 模式 |
-| macOS Intel | `baidu-web-server-macos-x86_64` | 6.8M | Web 服务器 |
-| macOS Apple Silicon | `baidu-direct-link-macos-aarch64` | 5.3M | CLI 模式 |
-| macOS Apple Silicon | `baidu-web-server-macos-aarch64` | 6.6M | Web 服务器 |
-| Windows x86_64 | `baidu-direct-link-windows-x86_64.exe` | 5.9M | CLI 模式 |
-| Windows x86_64 | `baidu-web-server-windows-x86_64.exe` | 7.2M | Web 服务器 |
 
 ## ✨ 改进
 
@@ -124,7 +120,9 @@ sign_secret = "your-sign-secret"
 
 - **最低配置**: 单核 CPU，32MB 内存，10MB 存储
 - **推荐配置**: 双核 CPU，64MB 内存，50MB 存储
-- **支持平台**: Linux, macOS, Windows (WSL), Docker
+- **预编译二进制**: Linux x86_64
+- **从源码编译**: Rust 支持的平台（取决于本地工具链与依赖）
+- **Docker / Podman**: 使用本仓库的 docker-compose 从源码运行
 
 ## 🐛 已知问题
 

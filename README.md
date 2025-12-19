@@ -33,7 +33,7 @@
 - ✅ 自动递归展开文件夹
 
 ### 通用特性
-- ✅ 支持 Docker 部署
+- ✅ 支持 Docker / Podman 运行（从源码构建启动）
 - ✅ 详细的日志输出
 - ✅ 安全的签名验证
 
@@ -42,6 +42,8 @@
 ### 方式一：从 Release 下载（二进制）
 
 1. 下载对应平台的二进制：https://github.com/Develata/BaiduPCS-Relay-RS/releases
+
+> 当前 Release 提供的预编译二进制以 Linux x86_64 为主；其他平台请使用“从源码编译”或 Docker 方式运行。
 
 2. 创建配置文件 `config.toml`：
 
@@ -67,13 +69,13 @@ access_token = ""
 3. 运行 CLI 模式（分享转存）：
 
 ```bash
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
+./baidu-direct-link-linux-x86_64 "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
 ```
 
 4. 运行 Web 服务器模式：
 
 ```bash
-./baidu-web-server
+./baidu-web-server-linux-x86_64
 # 服务启动在 http://localhost:5200
 ```
 
@@ -97,7 +99,7 @@ cp config.example.toml config.toml
 
 ## 配置说明
 
-配置文件默认读取当前目录的 `config.toml`。完整配置示例：
+配置文件默认读取当前目录的 `config.toml`。
 
 ```toml
 [baidu]
@@ -114,8 +116,24 @@ save_path = "/我的资源"
 http_timeout_secs = 120
 
 [web]
-# Web 服务器访问密码
+# Web 服务器访问密码（调用 API 时作为 token 传入）
 access_token = "your-secret-password"
+
+# 签名密钥（用于生成下载链接签名）
+sign_secret = "your-sign-secret"
+
+# 可选：ZIP 打包大小限制（字节）。超过会按 1GB/分卷进行拆分
+# max_zip_size = 1073741824
+
+[baidu_open]
+# 可选：百度开放平台（如未使用可留空）
+client_id = ""
+client_secret = ""
+redirect_uri = ""
+refresh_token = ""
+access_token = ""
+```
+
 ### CLI 模式（分享转存）
 
 ```bash
@@ -237,51 +255,30 @@ Content-Type: application/json
 GET /health
 ```
 
-详细使用说明见 [TEST_GUIDE.md](TEST_GUIDE.md)。aidu-direct-link "https://pan.baidu.com/s/1xxxxx"
-
-# 有提取码
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234"
-
-# 指定配置文件路径
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234" "/path/to/config.toml"
-```
-
-### 批量转存（脚本示例）
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-items=(
-  "https://pan.baidu.com/s/1xxxx|1234"
-  "https://pan.baidu.com/s/1yyyy|5678"
-  "https://pan.baidu.com/s/1zzzz|"
-)
-
-for item in "${items[@]}"; do
-  IFS='|' read -r link pwd <<< "$item"
-  echo "转存: $link"
-  ./baidu-direct-link "$link" "$pwd"
-  sleep 2
-done
-```
-
-## 诊断
-
-仓库自带 diagnose.sh，可用于快速检查配置/连通性：
-
-```bash
-chmod +x diagnose.sh
-./diagnose.sh
-```
+详细使用说明见 [TEST_GUIDE.md](TEST_GUIDE.md)。
 
 ## Docker 运行
 
-仓库包含 docker-compose.yml，可将本地 config.toml 以只读方式挂载到容器：
+仓库提供 [docker-compose.yml](docker-compose.yml) 用于在容器中从源码启动服务（适合本地开发/快速试跑）。
+
+1) 准备配置：
 
 ```bash
-docker-compose build
-docker-compose run --rm baidu-transfer "https://pan.baidu.com/s/1xxxxx" "1234"
+cp config.example.toml config.toml
+# 编辑 config.toml 填入你的 Cookie
+```
+
+2) 启动 Web 服务器：
+
+```bash
+docker compose up --build
+# 服务启动在 http://localhost:5200
+```
+
+3) 在容器中运行 CLI（一次性）：
+
+```bash
+docker compose run --rm app bash -lc "apt-get update && apt-get install -y pkg-config libssl-dev && cargo run --bin baidu-direct-link -- 'https://pan.baidu.com/s/1xxxxx' '1234'"
 ```
 
 ## 安全提示
@@ -377,12 +374,9 @@ chmod 600 config.toml
 - 存储: 50 MB
 
 ### 支持平台
-- ✅ Linux (x86_64, aarch64, armv7)
-- ✅ macOS (Intel, Apple Silicon)
-- ✅ Windows (x86_64)
-- ✅ Docker / Podman
-- ✅ 树莓派 (Raspberry Pi)
-- ✅ OpenWrt / 路由器
+- ✅ 预编译二进制：Linux x86_64（见 Release）
+- ✅ 从源码编译：Rust 支持的平台（取决于本地 Rust 工具链与依赖）
+- ✅ Docker / Podman：使用本仓库的 docker-compose 从源码运行
 
 ## 常见问题
 
