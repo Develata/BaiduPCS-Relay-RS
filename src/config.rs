@@ -31,6 +31,9 @@ pub struct WebConfig {
     /// 本地直链签名密钥，用于生成 /d/...?...sign= 链接
     #[serde(default = "default_sign_secret")]
     pub sign_secret: String,
+    /// ZIP 压缩包最大大小限制 (字节)，超过此大小会返回错误。默认 2GB
+    #[serde(default = "default_max_zip_size")]
+    pub max_zip_size: u64,
 }
 
 fn default_save_path() -> String {
@@ -48,6 +51,15 @@ fn default_access_token() -> String {
 
 fn default_sign_secret() -> String {
     std::env::var("WEB_SIGN_SECRET").unwrap_or_else(|_| "change-me-sign".to_string())
+}
+
+fn default_max_zip_size() -> u64 {
+    // 默认 2GB，可通过 MAX_ZIP_SIZE 环境变量覆盖（单位：字节）
+    // 例如: MAX_ZIP_SIZE=1073741824 (1GB) 或 MAX_ZIP_SIZE=2147483648 (2GB)
+    std::env::var("MAX_ZIP_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(2 * 1024 * 1024 * 1024) // 2GB default
 }
 
 /// 百度开放平台 / OAuth 相关配置（当前主要用于对齐 OpenList 策略，后续可扩展）
