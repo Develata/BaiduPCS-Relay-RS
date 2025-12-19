@@ -7,9 +7,9 @@ use std::fs;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub baidu: BaiduConfig,
-    #[serde(default)]  // ✅ 如果配置文件没有 [web] 就用默认值
+    #[serde(default)] // ✅ 如果配置文件没有 [web] 就用默认值
     pub web: WebConfig,
-    #[serde(default)]  // ✅ 百度开放平台 / 本地签名相关配置（预留）
+    #[serde(default)] // ✅ 百度开放平台 / 本地签名相关配置（预留）
     pub baidu_open: BaiduOpenConfig,
 }
 
@@ -81,7 +81,6 @@ pub struct BaiduOpenConfig {
     #[serde(default)]
     pub access_token: String,
 }
-
 
 impl Config {
     pub fn load(path: &str) -> Result<Self> {

@@ -46,7 +46,9 @@ fn parse_args() -> Result<Args> {
 
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--config" => out.config_path = args.next().ok_or_else(|| anyhow!("--config 缺少参数"))?,
+            "--config" => {
+                out.config_path = args.next().ok_or_else(|| anyhow!("--config 缺少参数"))?
+            }
             "--base" => out.base_url = args.next().ok_or_else(|| anyhow!("--base 缺少参数"))?,
             "--token" => out.token = Some(args.next().ok_or_else(|| anyhow!("--token 缺少参数"))?),
             "--dir" => out.dir = Some(args.next().ok_or_else(|| anyhow!("--dir 缺少参数"))?),
@@ -54,13 +56,12 @@ fn parse_args() -> Result<Args> {
                 let v = args.next().ok_or_else(|| anyhow!("--count 缺少参数"))?;
                 out.count = v.parse::<usize>().context("--count 需要是整数")?;
             }
-            "--archive" => out.archive_name = args.next().ok_or_else(|| anyhow!("--archive 缺少参数"))?,
+            "--archive" => {
+                out.archive_name = args.next().ok_or_else(|| anyhow!("--archive 缺少参数"))?
+            }
             "--out" => out.out_path = args.next().ok_or_else(|| anyhow!("--out 缺少参数"))?,
             "-h" | "--help" => {
-                println!(
-                    "{}",
-                    include_str!("../../README.md")
-                );
+                println!("{}", include_str!("../../README.md"));
                 return Err(anyhow!("已显示帮助（请忽略该错误退出）"));
             }
             other => return Err(anyhow!("未知参数: {other}")),
@@ -97,7 +98,9 @@ struct ZipRequest {
 #[tokio::main]
 async fn main() -> Result<()> {
     // 日志简单输出（避免重复 init 导致 panic）
-    let _ = tracing_subscriber::fmt().with_env_filter("baidu_direct_link=info").try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("baidu_direct_link=info")
+        .try_init();
 
     let args = parse_args()?;
 
@@ -112,7 +115,10 @@ async fn main() -> Result<()> {
         .token
         .clone()
         .unwrap_or_else(|| config.web.access_token.clone());
-    let dir = args.dir.clone().unwrap_or_else(|| config.baidu.save_path.clone());
+    let dir = args
+        .dir
+        .clone()
+        .unwrap_or_else(|| config.baidu.save_path.clone());
 
     println!("- dir:    {}", dir);
     println!("- count:  {}", args.count);
@@ -128,17 +134,27 @@ async fn main() -> Result<()> {
     let resp = state
         .client
         .get(&list_url)
-        .header("User-Agent", baidu_direct_link::config::Config::browser_ua())
+        .header(
+            "User-Agent",
+            baidu_direct_link::config::Config::browser_ua(),
+        )
         .send()
         .await
         .context("请求目录列表失败")?;
 
     let text = resp.text().await.context("读取目录列表响应失败")?;
-    let result: ListResult = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("解析目录列表失败: {e}, body={}", &text[..text.len().min(300)]))?;
+    let result: ListResult = serde_json::from_str(&text).map_err(|e| {
+        anyhow!(
+            "解析目录列表失败: {e}, body={}",
+            &text[..text.len().min(300)]
+        )
+    })?;
 
     if result.errno != 0 {
-        return Err(anyhow!("目录列表 errno={}（可能 Cookie 失效或路径不存在）", result.errno));
+        return Err(anyhow!(
+            "目录列表 errno={}（可能 Cookie 失效或路径不存在）",
+            result.errno
+        ));
     }
 
     let mut folders: Vec<ListEntry> = Vec::new();
@@ -152,7 +168,10 @@ async fn main() -> Result<()> {
     }
 
     let fsids: Vec<u64> = if let Some(folder) = folders.first() {
-        println!("✅ 检测到文件夹，优先测试文件夹打包：{} (fsid={})", folder.server_filename, folder.fsid);
+        println!(
+            "✅ 检测到文件夹，优先测试文件夹打包：{} (fsid={})",
+            folder.server_filename, folder.fsid
+        );
         println!("   将请求 /api/zip 传入该文件夹 fsid，由后端递归展开并打包 ZIP");
         vec![folder.fsid]
     } else {
@@ -197,7 +216,11 @@ async fn main() -> Result<()> {
 
     if !status.is_success() {
         let err_text = zip_resp.text().await.unwrap_or_default();
-        return Err(anyhow!("/api/zip 返回失败 status={}, body={}", status, err_text));
+        return Err(anyhow!(
+            "/api/zip 返回失败 status={}, body={}",
+            status,
+            err_text
+        ));
     }
 
     if !ct.contains("application/zip") {
@@ -225,6 +248,9 @@ async fn main() -> Result<()> {
 
     out_file.flush().await.ok();
 
-    println!("\n✅ ZIP 流式下载完成: {} bytes -> {}", total, args.out_path);
+    println!(
+        "\n✅ ZIP 流式下载完成: {} bytes -> {}",
+        total, args.out_path
+    );
     Ok(())
 }

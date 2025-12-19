@@ -1,5 +1,5 @@
 //! 测试获取下载直链功能（含 Web 本地签名直链逻辑）
-//! 
+//!
 //! 使用方法：
 //! cargo test --test test_download -- --nocapture
 
@@ -28,11 +28,8 @@ async fn test_get_download_links() -> Result<()> {
 
     // 2. 列举你的网盘目录
     println!("📁 列举网盘目录: /我的资源");
-    let fs_ids = baidupcs::download::list_directory_fsids(
-        state.as_ref(),
-        "/我的资源"
-    ).await?;
-    
+    let fs_ids = baidupcs::download::list_directory_fsids(state.as_ref(), "/我的资源").await?;
+
     println!("✅ 找到 {} 个文件\n", fs_ids.len());
 
     if fs_ids.is_empty() {
@@ -120,8 +117,7 @@ async fn test_generate_signed_links_only() -> Result<()> {
     let state = Arc::new(AppState::new(config)?);
 
     // 2. 列举目录，取前 3 个文件，拿到它们的路径
-    let fs_ids =
-        baidupcs::download::list_directory_fsids(state.as_ref(), &save_path).await?;
+    let fs_ids = baidupcs::download::list_directory_fsids(state.as_ref(), &save_path).await?;
 
     if fs_ids.is_empty() {
         println!("⚠️  目录为空，请先转存一些文件");
@@ -138,8 +134,7 @@ async fn test_generate_signed_links_only() -> Result<()> {
 
     for (filename, _url) in links.into_iter() {
         let full_path = format!("{}/{}", save_path.trim_end_matches('/'), filename);
-        let local_link =
-            crate_like_generate_signed_link_for_test(&sign_secret, &full_path, 3600);
+        let local_link = crate_like_generate_signed_link_for_test(&sign_secret, &full_path, 3600);
         println!("📄 {}", filename);
         println!("   本地直链: {}\n", local_link);
     }
@@ -167,8 +162,8 @@ fn crate_like_generate_signed_link_for_test(
 
     let data = format!("{pan_path}:{expires}");
 
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(sign_secret.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac = Hmac::<Sha256>::new_from_slice(sign_secret.as_bytes())
+        .expect("HMAC can take key of any size");
     mac.update(data.as_bytes());
     let result = mac.finalize().into_bytes();
     let sign = URL_SAFE_NO_PAD.encode(result);

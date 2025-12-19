@@ -1,0 +1,53 @@
+# Git
+.git/
+.gitignore
+.github/
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Config files (use mounted volumes instead)
+config.toml
+config.local.toml
+config.*.local.toml
+
+# Logs
+*.log
+*.log.*
+.logs/
+
+# Test files
+test_*.py
+test_*.sh
+测试指南.md
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.bak.*
+*.orig
+*.rej
+repomix-output.xml
+check.log
+share_page.html
+
+# Documentation (keep only essential)
+TEST_GUIDE.md
+
+# IDE
+.vscode/
+.idea/
+.devcontainer/
+
+# Environment
+.env
+.env.*
+.cargo/
+
+# OS
+.DS_Store
+*:Zone.Identifier

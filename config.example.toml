@@ -8,8 +8,8 @@ cookie_stoken = "YOUR_STOKEN"
 # 转存保存路径（网盘目录）
 save_path = "/我的资源"
 
-# HTTP 请求超时（秒）
-http_timeout_secs = 30
+# HTTP 请求超时（秒）- 建议 120-300，避免大文件下载超时
+http_timeout_secs = 120
 
 [web]
 access_token = "your-secret-password"  # 设置你的访问密码

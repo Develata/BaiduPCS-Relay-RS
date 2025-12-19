@@ -3,7 +3,7 @@ use anyhow::Result;
 use axum::{
     body::Body,
     extract::{Query, State},
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{Html, IntoResponse, Json, Redirect, Response},
     routing::{get, post},
     Router,
@@ -109,7 +109,7 @@ async fn convert_handler(
     info!("📥 收到转换请求: {}", req.link);
 
     let correct_token = &state.config.web.access_token;
-    
+
     if req.token.is_empty() {
         return (
             StatusCode::UNAUTHORIZED,
@@ -144,7 +144,7 @@ async fn convert_handler(
                         &state.config.web.sign_secret,
                         fsid,
                         &filename,
-                        3600 * 24
+                        3600 * 24,
                     );
 
                     FileLink {
@@ -206,11 +206,7 @@ async fn zip_handler(
         Ok(v) => v,
         Err(e) => {
             warn!("❌ 展开 fsids 失败: {}", e);
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("展开 fsids 失败: {}", e),
-            )
-                .into_response();
+            return (StatusCode::BAD_REQUEST, format!("展开 fsids 失败: {}", e)).into_response();
         }
     };
 
@@ -220,7 +216,15 @@ async fn zip_handler(
         req.archive_name.clone()
     };
 
-    match pack_files_to_zip_with_split(&state, &access_token, jobs, &archive_base_name, state.config.web.max_zip_size).await {
+    match pack_files_to_zip_with_split(
+        &state,
+        &access_token,
+        jobs,
+        &archive_base_name,
+        state.config.web.max_zip_size,
+    )
+    .await
+    {
         Ok(parts) => {
             if parts.is_empty() {
                 return (StatusCode::INTERNAL_SERVER_ERROR, "生成的 ZIP 文件为空").into_response();
@@ -255,7 +259,9 @@ async fn zip_handler(
                     size_bytes: u64,
                 }
 
-                let part_list: Vec<ZipPart> = parts.iter().enumerate()
+                let part_list: Vec<ZipPart> = parts
+                    .iter()
+                    .enumerate()
                     .map(|(idx, data)| ZipPart {
                         part_num: (idx + 1) as u32,
                         filename: format!("{}.z{:02}", archive_base_name, idx + 1),
@@ -264,10 +270,12 @@ async fn zip_handler(
                     .collect();
 
                 let total_size: u64 = parts.iter().map(|p| p.len() as u64).sum();
-                
-                info!("✅ ZIP 分卷完成: {} 个 part, 总大小 {} MB",
+
+                info!(
+                    "✅ ZIP 分卷完成: {} 个 part, 总大小 {} MB",
                     parts.len(),
-                    total_size / 1024 / 1024);
+                    total_size / 1024 / 1024
+                );
 
                 (
                     StatusCode::OK,
@@ -278,12 +286,17 @@ async fn zip_handler(
                         "parts": part_list,
                         "message": "文件超过大小限制，已分卷。请分别下载各个 part 文件。"
                     })),
-                ).into_response()
+                )
+                    .into_response()
             }
         }
         Err(e) => {
             warn!("❌ ZIP 打包失败: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("ZIP 打包失败: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("ZIP 打包失败: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -298,24 +311,32 @@ async fn pack_files_to_zip_with_split(
     archive_base_name: &str,
     max_zip_size: u64,
 ) -> Result<Vec<Vec<u8>>> {
+    use std::io::Write;
     use zip::write::{FileOptions, ZipWriter};
     use zip::CompressionMethod;
-    use std::io::Write;
 
-    info!("📦 开始下载并打包 {} 个文件到 ZIP (最大大小限制: {} MB)", 
-        jobs.len(), 
-        max_zip_size / 1024 / 1024);
+    info!(
+        "📦 开始下载并打包 {} 个文件到 ZIP (最大大小限制: {} MB)",
+        jobs.len(),
+        max_zip_size / 1024 / 1024
+    );
 
     // 第一阶段：下载所有文件到内存，并估算大小
     let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(jobs.len());
     let mut total_uncompressed_size: u64 = 0;
 
     for (i, (zip_name, fsid)) in jobs.into_iter().enumerate() {
-        info!("📥 下载第 {}/{} 个文件 fsid={}", i + 1, entries.capacity().max(1), fsid);
+        info!(
+            "📥 下载第 {}/{} 个文件 fsid={}",
+            i + 1,
+            entries.capacity().max(1),
+            fsid
+        );
 
-        let (_filename, url) = baidupcs::get_download_link_by_fsid_internal(state, fsid, access_token)
-            .await
-            .map_err(|e| anyhow::anyhow!("获取直链失败 fsid={}: {}", fsid, e))?;
+        let (_filename, url) =
+            baidupcs::get_download_link_by_fsid_internal(state, fsid, access_token)
+                .await
+                .map_err(|e| anyhow::anyhow!("获取直链失败 fsid={}: {}", fsid, e))?;
 
         let resp = state
             .client
@@ -326,7 +347,11 @@ async fn pack_files_to_zip_with_split(
             .map_err(|e| anyhow::anyhow!("请求文件失败 fsid={}: {}", fsid, e))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow::anyhow!("下载文件失败 fsid={}, status={}", fsid, resp.status()));
+            return Err(anyhow::anyhow!(
+                "下载文件失败 fsid={}, status={}",
+                fsid,
+                resp.status()
+            ));
         }
 
         let bytes = resp
@@ -340,19 +365,20 @@ async fn pack_files_to_zip_with_split(
         entries.push((zip_name, bytes));
     }
 
-    info!("📊 总未压缩大小: {} MB", total_uncompressed_size / 1024 / 1024);
+    info!(
+        "📊 总未压缩大小: {} MB",
+        total_uncompressed_size / 1024 / 1024
+    );
 
     // 检查是否超过限制
     if total_uncompressed_size > max_zip_size {
-        warn!("⚠️  文件大小 {} MB 超过限制 {} MB，将分卷打包",
+        warn!(
+            "⚠️  文件大小 {} MB 超过限制 {} MB，将分卷打包",
             total_uncompressed_size / 1024 / 1024,
-            max_zip_size / 1024 / 1024);
-        
-        return pack_files_to_zip_parts(
-            entries, 
-            archive_base_name,
-            max_zip_size
+            max_zip_size / 1024 / 1024
         );
+
+        return pack_files_to_zip_parts(entries, archive_base_name, max_zip_size);
     }
 
     // 第二阶段：在 spawn_blocking 里打包成单个 ZIP
@@ -385,12 +411,12 @@ fn pack_files_to_zip_parts(
     _archive_base_name: &str,
     max_part_size: u64,
 ) -> Result<Vec<Vec<u8>>> {
+    use std::io::Write;
     use zip::write::{FileOptions, ZipWriter};
     use zip::CompressionMethod;
-    use std::io::Write;
 
     const PART_SIZE_LIMIT: u64 = 1024 * 1024 * 1024; // 1GB per part
-    
+
     let part_limit = PART_SIZE_LIMIT.min(max_part_size);
     let total_entries = entries.len();
     let mut parts = Vec::new();
@@ -398,18 +424,23 @@ fn pack_files_to_zip_parts(
     let mut current_part_size: u64 = 0;
     let mut entries_in_part = 0;
 
-    info!("📊 开始分卷（每个 part 限制: {} MB）", part_limit / 1024 / 1024);
+    info!(
+        "📊 开始分卷（每个 part 限制: {} MB）",
+        part_limit / 1024 / 1024
+    );
 
     for (idx, (filename, data)) in entries.into_iter().enumerate() {
         let data_size = data.len() as u64;
 
         // 如果加上这个文件会超过 part 限制，先保存当前 part
         if current_part_size > 0 && current_part_size + data_size > part_limit {
-            info!("💾 part {} 完成: {} 个文件, {} MB",
+            info!(
+                "💾 part {} 完成: {} 个文件, {} MB",
                 parts.len() + 1,
                 entries_in_part,
-                current_part_size / 1024 / 1024);
-            
+                current_part_size / 1024 / 1024
+            );
+
             parts.push(current_part_data);
             current_part_data = Vec::new();
             current_part_size = 0;
@@ -427,10 +458,12 @@ fn pack_files_to_zip_parts(
 
     // 加入最后一个 part
     if !current_part_data.is_empty() {
-        info!("💾 part {} 完成: {} 个文件, {} MB",
+        info!(
+            "💾 part {} 完成: {} 个文件, {} MB",
             parts.len() + 1,
             entries_in_part,
-            current_part_size / 1024 / 1024);
+            current_part_size / 1024 / 1024
+        );
         parts.push(current_part_data);
     }
 
@@ -447,7 +480,8 @@ fn pack_files_to_zip_parts(
                     let mut buffer = Vec::new();
                     let cursor = std::io::Cursor::new(&mut buffer);
                     let mut zip = ZipWriter::new(cursor);
-                    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+                    let options =
+                        FileOptions::default().compression_method(CompressionMethod::Deflated);
 
                     for (filename, data) in entries {
                         let name = filename.replace("\\", "/");
@@ -465,7 +499,10 @@ fn pack_files_to_zip_parts(
 
         handles
             .into_iter()
-            .map(|h| h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("线程 panic"))))
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("线程 panic")))
+            })
             .collect::<Result<Vec<_>>>()
     })?;
 
@@ -525,7 +562,7 @@ async fn download_handler(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    
+
     if now > expires {
         info!("❌ 链接已过期: fsid={}", fsid);
         return (StatusCode::UNAUTHORIZED, "链接已过期").into_response();
@@ -562,17 +599,16 @@ async fn download_handler(
     };
 
     if meta.is_dir {
-        info!("📦 fsid={} 是文件夹，开始打包 ZIP: {} ({})", fsid, meta.filename, meta.path);
+        info!(
+            "📦 fsid={} 是文件夹，开始打包 ZIP: {} ({})",
+            fsid, meta.filename, meta.path
+        );
 
         let jobs = match baidupcs::expand_fsids_to_file_jobs(&state, &[fsid], &access_token).await {
             Ok(v) => v,
             Err(e) => {
                 warn!("❌ 展开目录失败: fsid={}, error={}", fsid, e);
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    format!("展开目录失败: {}", e),
-                )
-                    .into_response();
+                return (StatusCode::BAD_GATEWAY, format!("展开目录失败: {}", e)).into_response();
             }
         };
 
@@ -588,10 +624,19 @@ async fn download_handler(
             filename.clone()
         };
 
-        match pack_files_to_zip_with_split(&state, &access_token, jobs, &archive_base, state.config.web.max_zip_size).await {
+        match pack_files_to_zip_with_split(
+            &state,
+            &access_token,
+            jobs,
+            &archive_base,
+            state.config.web.max_zip_size,
+        )
+        .await
+        {
             Ok(parts_list) => {
                 if parts_list.is_empty() {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, "生成的 ZIP 文件为空").into_response();
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "生成的 ZIP 文件为空")
+                        .into_response();
                 }
 
                 // 对于 download_handler，只返回第一个 part（或单个 ZIP）

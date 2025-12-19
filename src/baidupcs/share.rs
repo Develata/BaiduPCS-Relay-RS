@@ -87,7 +87,7 @@ pub async fn get_share_info(
         info!("🔐 验证提取码...");
         verify_password(state, surl_param, pwd, &bdstoken).await?;
         info!("✅ 提取码验证成功");
-        
+
         // ✅ 等待 Cookie 生效
         info!("⏳ 等待 Cookie 生效...");
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -115,7 +115,6 @@ pub async fn get_share_info(
     })
 }
 
-
 /// 验证提取码
 /// 验证提取码
 async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str) -> Result<()> {
@@ -123,7 +122,7 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    
+
     let url = format!(
         "https://pan.baidu.com/share/verify?surl={}&t={}&channel=chunlei&web=1&app_id=250528&clienttype=0&bdstoken={}",
         surl,
@@ -131,11 +130,7 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
         bdstoken
     );
 
-    let form = [
-        ("pwd", pwd),
-        ("vcode", ""),
-        ("vcode_str", "")
-    ];
+    let form = [("pwd", pwd), ("vcode", ""), ("vcode_str", "")];
 
     debug!("🔐 提取码验证: surl={}, pwd={}", surl, pwd);
 
@@ -143,7 +138,10 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
         .client
         .post(&url)
         .header("User-Agent", Config::browser_ua())
-        .header("Referer", format!("https://pan.baidu.com/share/init?surl={}", surl))
+        .header(
+            "Referer",
+            format!("https://pan.baidu.com/share/init?surl={}", surl),
+        )
         .header("Origin", "https://pan.baidu.com")
         .header("X-Requested-With", "XMLHttpRequest")
         .header("Accept", "application/json, text/javascript, */*; q=0.01")
@@ -192,13 +190,12 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
     }
 
     info!("✅ 提取码验证成功");
-    
+
     // ✅ 等待一下，确保 Cookie 生效
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     Ok(())
 }
-
 
 /// 获取文件列表
 ///

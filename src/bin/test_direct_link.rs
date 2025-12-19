@@ -1,5 +1,5 @@
 //! 测试获取下载直链的独立工具
-//! 
+//!
 //! 使用方法：
 //! cargo run --bin test-direct-link -- <fs_id1> <fs_id2> ...
 //! 或者自动从目录获取：
@@ -37,10 +37,9 @@ async fn main() -> Result<()> {
     let fs_ids: Vec<u64> = if args.len() > 1 && args[1] == "--auto" {
         // 自动从目录获取
         println!("📁 自动从目录获取文件: {}", config.baidu.save_path);
-        let all_ids = baidupcs::download::list_directory_fsids(
-            state.as_ref(),
-            &config.baidu.save_path
-        ).await?;
+        let all_ids =
+            baidupcs::download::list_directory_fsids(state.as_ref(), &config.baidu.save_path)
+                .await?;
 
         if all_ids.is_empty() {
             println!("⚠️  目录为空");
@@ -48,11 +47,11 @@ async fn main() -> Result<()> {
         }
 
         println!("✅ 找到 {} 个文件", all_ids.len());
-        
+
         // 只测试前 3 个
         let test_count = 3.min(all_ids.len());
         println!("🎯 测试前 {} 个文件\n", test_count);
-        
+
         all_ids.into_iter().take(test_count).collect()
     } else if args.len() > 1 {
         // 手动指定 fs_id
@@ -84,12 +83,12 @@ async fn main() -> Result<()> {
         Ok(links) => {
             println!("\n✅ 成功获取 {} 个下载链接:\n", links.len());
             println!("{}", "=".repeat(80));
-            
+
             for (i, (filename, url)) in links.iter().enumerate() {
                 println!("\n{}. 📄 {}", i + 1, filename);
                 println!("   🔗 {}", url);
             }
-            
+
             println!("\n{}", "=".repeat(80));
             println!("\n💡 可以用这些直链下载文件（需要带上 Cookie）\n");
         }

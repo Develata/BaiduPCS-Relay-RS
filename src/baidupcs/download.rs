@@ -3,9 +3,12 @@
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use tracing::{debug, info, warn};
-use zip::{write::{FileOptions, ZipWriter}, CompressionMethod};
 use std::io::Write;
+use tracing::{debug, info, warn};
+use zip::{
+    write::{FileOptions, ZipWriter},
+    CompressionMethod,
+};
 
 use crate::config::Config;
 use crate::AppState;
@@ -38,7 +41,11 @@ pub async fn get_fsid_meta(state: &AppState, fsid: u64, access_token: &str) -> R
     let status = resp.status();
     let text = resp.text().await?;
 
-    debug!("filemetas 响应 status={}, body={}", status, &text[..text.len().min(300)]);
+    debug!(
+        "filemetas 响应 status={}, body={}",
+        status,
+        &text[..text.len().min(300)]
+    );
 
     #[derive(Deserialize)]
     struct FileMetasResponse {
@@ -64,7 +71,10 @@ pub async fn get_fsid_meta(state: &AppState, fsid: u64, access_token: &str) -> R
         return Err(anyhow!("filemetas 返回错误 errno={}", result.errno));
     }
 
-    let item = result.list.first().ok_or_else(|| anyhow!("filemetas 返回空列表"))?;
+    let item = result
+        .list
+        .first()
+        .ok_or_else(|| anyhow!("filemetas 返回空列表"))?;
 
     Ok(FsidMeta {
         fsid,
@@ -75,15 +85,15 @@ pub async fn get_fsid_meta(state: &AppState, fsid: u64, access_token: &str) -> R
 }
 
 /// 批量获取下载链接 - OpenList 方案
-pub async fn get_download_links(
-    state: &AppState,
-    fsids: &[u64],
-) -> Result<Vec<(String, String)>> {
+pub async fn get_download_links(state: &AppState, fsids: &[u64]) -> Result<Vec<(String, String)>> {
     if fsids.is_empty() {
         return Err(anyhow!("文件 fsids 列表不能为空"));
     }
 
-    info!("📥 使用 OpenAPI 方式获取下载链接..., 共 {} 个文件", fsids.len());
+    info!(
+        "📥 使用 OpenAPI 方式获取下载链接..., 共 {} 个文件",
+        fsids.len()
+    );
 
     let access_token = get_or_refresh_access_token(state).await?;
 
@@ -91,7 +101,7 @@ pub async fn get_download_links(
 
     for (i, &fsid) in fsids.iter().enumerate() {
         info!("🔍 处理第 {}/{} 个 fsid: {}", i + 1, fsids.len(), fsid);
-        
+
         match get_download_link_by_fsid_internal(state, fsid, &access_token).await {
             Ok((filename, url)) => {
                 info!("✅ 获取成功: {}", filename);
@@ -139,7 +149,11 @@ pub async fn get_download_link_by_fsid_internal(
     let status = resp.status();
     let text = resp.text().await?;
 
-    debug!("filemetas 响应 status={}, body={}", status, &text[..text.len().min(300)]);
+    debug!(
+        "filemetas 响应 status={}, body={}",
+        status,
+        &text[..text.len().min(300)]
+    );
 
     #[derive(Deserialize)]
     struct FileMetasResponse {
@@ -181,7 +195,11 @@ pub async fn get_download_link_by_fsid_internal(
         return Err(anyhow!("文件 dlink 为空: {}", item.filename));
     }
 
-    let full_url = format!("{}?access_token={}", item.dlink, urlencoding::encode(access_token));
+    let full_url = format!(
+        "{}?access_token={}",
+        item.dlink,
+        urlencoding::encode(access_token)
+    );
     debug!("📥 302 跳转获取最终下载链接...");
 
     let res = state
@@ -275,10 +293,7 @@ async fn list_dir_entries(state: &AppState, dir_path: &str) -> Result<Vec<DirEnt
         .collect())
 }
 
-async fn collect_files_recursive(
-    state: &AppState,
-    base_dir: &str,
-) -> Result<Vec<(String, u64)>> {
+async fn collect_files_recursive(state: &AppState, base_dir: &str) -> Result<Vec<(String, u64)>> {
     let base_dir = base_dir.trim_end_matches('/').to_string();
     let mut stack = vec![base_dir.clone()];
     let mut out: Vec<(String, u64)> = Vec::new();
@@ -368,7 +383,8 @@ pub async fn zip_directory_by_path_to_bytes(
     for (i, (zip_name, fsid)) in files.into_iter().enumerate() {
         info!("📥 下载第 {}/{} 个文件 fsid={}", i + 1, total, fsid);
 
-        let (_filename, url) = get_download_link_by_fsid_internal(state, fsid, access_token).await?;
+        let (_filename, url) =
+            get_download_link_by_fsid_internal(state, fsid, access_token).await?;
 
         let resp = state
             .client
@@ -378,7 +394,11 @@ pub async fn zip_directory_by_path_to_bytes(
             .await?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("下载文件失败 fsid={}, status={}", fsid, resp.status()));
+            return Err(anyhow!(
+                "下载文件失败 fsid={}, status={}",
+                fsid,
+                resp.status()
+            ));
         }
 
         let bytes = resp.bytes().await?.to_vec();
@@ -414,7 +434,10 @@ pub async fn zip_fsids_to_bytes(
         return Err(anyhow!("文件 fsids 列表不能为空"));
     }
 
-    info!("📦 开始 ZIP 打包，共 {} 个输入项（文件/文件夹）", fsids.len());
+    info!(
+        "📦 开始 ZIP 打包，共 {} 个输入项（文件/文件夹）",
+        fsids.len()
+    );
 
     let file_jobs = expand_fsids_to_file_jobs(state, fsids, access_token).await?;
     info!("📄 需要打包的文件总数: {}", file_jobs.len());
@@ -426,7 +449,8 @@ pub async fn zip_fsids_to_bytes(
     for (i, (zip_name, fsid)) in file_jobs.into_iter().enumerate() {
         info!("📥 下载第 {}/{} 个文件 fsid={}", i + 1, total, fsid);
 
-        let (_filename, url) = get_download_link_by_fsid_internal(state, fsid, access_token).await?;
+        let (_filename, url) =
+            get_download_link_by_fsid_internal(state, fsid, access_token).await?;
 
         let resp = state
             .client
@@ -436,7 +460,11 @@ pub async fn zip_fsids_to_bytes(
             .await?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("下载文件失败 fsid={}, status={}", fsid, resp.status()));
+            return Err(anyhow!(
+                "下载文件失败 fsid={}, status={}",
+                fsid,
+                resp.status()
+            ));
         }
 
         let bytes = resp.bytes().await?.to_vec();
@@ -522,7 +550,7 @@ pub async fn list_directory_fsids(state: &AppState, path: &str) -> Result<Vec<u6
     }
 
     info!("📂 目录文件数: {}", result.list.len());
-    
+
     for (i, file) in result.list.iter().take(5).enumerate() {
         info!("  {}. {} (fsid={})", i + 1, file.server_filename, file.fsid);
     }
@@ -541,20 +569,20 @@ pub async fn share_to_direct_link(
 
     info!("🔗 处理分享链接: {}", share_url);
 
-    let surl = baidupcs::extract_surl(share_url)
-        .ok_or_else(|| anyhow!("无法提取 surl"))?;
+    let surl = baidupcs::extract_surl(share_url).ok_or_else(|| anyhow!("无法提取 surl"))?;
 
     let info = baidupcs::get_share_info(state, share_url, &surl, pwd).await?;
-    info!("📦 分享文件数: {}", info.fs_ids.len());  // ✅ 修复：fsids -> fs_ids
+    info!("📦 分享文件数: {}", info.fs_ids.len()); // ✅ 修复：fsids -> fs_ids
 
     baidupcs::transfer_files(
-        state, 
-        &info.shareid, 
-        &info.uk, 
-        &info.fs_ids,     // ✅ 修复
-        &info.bdstoken, 
-        &surl
-    ).await?;
+        state,
+        &info.shareid,
+        &info.uk,
+        &info.fs_ids, // ✅ 修复
+        &info.bdstoken,
+        &surl,
+    )
+    .await?;
 
     info!("⏳ 等待转存完成...");
     tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
@@ -568,14 +596,13 @@ pub async fn share_to_direct_link(
 
     info!("✅ 找到 {} 个文件", files.len());
 
-    let target_count = info.fs_ids.len();  // ✅ 修复
+    let target_count = info.fs_ids.len(); // ✅ 修复
     let target_files: Vec<(u64, String)> = files.into_iter().take(target_count).collect();
 
     info!("🎯 返回 {} 个 fsid", target_files.len());
 
     Ok(target_files)
 }
-
 
 pub async fn list_directory_files(state: &AppState, path: &str) -> Result<Vec<(u64, String)>> {
     let url = format!(
@@ -618,5 +645,9 @@ pub async fn list_directory_files(state: &AppState, path: &str) -> Result<Vec<(u
 
     info!("📂 目录文件数: {}", result.list.len());
 
-    Ok(result.list.into_iter().map(|f| (f.fsid, f.server_filename)).collect())
+    Ok(result
+        .list
+        .into_iter()
+        .map(|f| (f.fsid, f.server_filename))
+        .collect())
 }

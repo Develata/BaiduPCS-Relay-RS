@@ -2,10 +2,10 @@
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use tracing::{debug, info, warn};
 use std::fs;
+use tracing::{debug, info, warn};
 
-use crate::{AppState, config::Config};
+use crate::{config::Config, AppState};
 
 /// 刷新 access_token
 pub async fn refresh_token(state: &AppState) -> Result<String> {
@@ -43,7 +43,11 @@ pub async fn refresh_token(state: &AppState) -> Result<String> {
     }
 
     if !status.is_success() {
-        return Err(anyhow!("刷新 access_token 失败: HTTP {}, body: {}", status, text));
+        return Err(anyhow!(
+            "刷新 access_token 失败: HTTP {}, body: {}",
+            status,
+            text
+        ));
     }
 
     let token: TokenResponse = serde_json::from_str(&text)
@@ -71,13 +75,13 @@ pub async fn refresh_token(state: &AppState) -> Result<String> {
 fn save_access_token(new_token: &str) -> Result<()> {
     let path = "config.toml";
     let content = fs::read_to_string(path)?;
-    
+
     let mut cfg: Config = toml::from_str(&content)?;
     cfg.baidu_open.access_token = new_token.to_string();
-    
+
     let new_content = toml::to_string_pretty(&cfg)?;
     fs::write(path, new_content)?;
-    
+
     info!("✅ 已更新 access_token 到配置文件");
     Ok(())
 }

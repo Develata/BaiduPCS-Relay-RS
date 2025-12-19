@@ -33,6 +33,11 @@ check.log
 *.orig
 *.rej
 
+# Test files
+test_*.py
+test_*.sh
+测试指南.md
+
 # docker & 容器相关本地文件
 docker-compose.override.yml
 docker-compose.local.yml

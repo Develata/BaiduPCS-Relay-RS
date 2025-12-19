@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
-百度网盘分享链接转存 CLI：把分享里的文件/文件夹转存到你自己的网盘目录。
+百度网盘分享链接转直链服务：支持分享链接转存、Web 服务器、文件打包下载。
 
 </div>
 
@@ -14,38 +14,67 @@
 
 ## 项目说明
 
-- 本项目为学习/研究性质的 Rust 命令行工具，功能聚焦在“分享链接转存”。
-- 使用你自己的百度账号 Cookie（BDUSS/STOKEN）在本地发起请求；请自行评估并遵守百度网盘相关服务条款。
+- 本项目为学习/研究性质的 Rust 工具，提供百度网盘分享链接处理功能
+- 使用你自己的百度账号 Cookie（BDUSS/STOKEN）在本地发起请求
+- 请自行评估并遵守百度网盘相关服务条款
 
 ## 功能特性
 
-- 支持带/不带提取码的分享链接
-- 自动拉取分享列表并发起转存
-- 可配置转存保存路径与 HTTP 超时
-- 支持 Docker 运行
+### CLI 模式
+- ✅ 支持带/不带提取码的分享链接
+- ✅ 自动拉取分享列表并发起转存
+- ✅ 可配置转存保存路径与 HTTP 超时
+
+### Web 服务器模式
+- ✅ 分享链接转换为直链
+- ✅ 文件/文件夹自动打包为 ZIP
+- ✅ 支持大文件分卷下载（可配置大小限制）
+- ✅ 密码保护的 API 接口
+- ✅ 自动递归展开文件夹
+
+### 通用特性
+- ✅ 支持 Docker 部署
+- ✅ 详细的日志输出
+- ✅ 安全的签名验证
 
 ## 快速开始
 
 ### 方式一：从 Release 下载（二进制）
 
-1) 下载并解压对应平台的二进制：
+1. 下载对应平台的二进制：https://github.com/Develata/BaiduPCS-Relay-RS/releases
 
-https://github.com/Develata/BaiduPCS-Relay-RS/releases
-
-2) 创建配置文件：
+2. 创建配置文件 `config.toml`：
 
 ```toml
 [baidu]
 cookie_bduss = "你的BDUSS"
 cookie_stoken = "你的STOKEN"
 save_path = "/我的资源"
-http_timeout_secs = 30
+http_timeout_secs = 120
+
+[web]
+access_token = "your-secret-password"
+sign_secret = "your-sign-secret"
+
+[baidu_open]
+client_id = ""
+client_secret = ""
+redirect_uri = ""
+refresh_token = ""
+access_token = ""
 ```
 
-3) 运行：
+3. 运行 CLI 模式（分享转存）：
 
 ```bash
 ./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
+```
+
+4. 运行 Web 服务器模式：
+
+```bash
+./baidu-web-server
+# 服务启动在 http://localhost:5200
 ```
 
 ### 方式二：从源码编译
@@ -59,12 +88,16 @@ cargo build --release
 cp config.example.toml config.toml
 # 编辑 config.toml 填入你的 Cookie
 
+# CLI 模式
 ./target/release/baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
+
+# Web 服务器模式
+./target/release/baidu-web-server
 ```
 
 ## 配置说明
 
-配置文件默认读取当前目录的 config.toml，也可以在命令行第 3 个参数指定路径。
+配置文件默认读取当前目录的 `config.toml`。完整配置示例：
 
 ```toml
 [baidu]
@@ -77,17 +110,134 @@ cookie_stoken = "YOUR_STOKEN"
 # 必填：转存保存路径（网盘目录，需要你提前创建）
 save_path = "/我的资源"
 
-# 可选：HTTP 请求超时时间（秒）
-http_timeout_secs = 30
-```
+# 可选：HTTP 请求超时时间（秒）- 推荐 120-300，避免大文件下载超时
+http_timeout_secs = 120
 
-## 使用方法
+[web]
+# Web 服务器访问密码
+access_token = "your-secret-password"
+### CLI 模式（分享转存）
 
 ```bash
 ./baidu-direct-link <分享链接> [提取码] [配置文件路径]
 
 # 无提取码
 ./baidu-direct-link "https://pan.baidu.com/s/1xxxxx"
+
+# 有提取码
+./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234"
+
+# 指定配置文件路径
+./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234" "/path/to/config.toml"
+```
+
+#### 批量转存（脚本示例）
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+items=(
+  "https://pan.baidu.com/s/1xxxx|1234"
+  "https://pan.baidu.com/s/1yyyy|5678"
+  "https://pan.baidu.com/s/1zzzz|"
+)
+
+for item in "${items[@]}"; do
+  IFS='|' read -r link pwd <<< "$item"
+  echo "转存: $link"
+  ./baidu-direct-link "$link" "$pwd"
+  sleep 2
+done
+```
+
+### Web 服务器模式
+
+启动服务器：
+
+```bash
+./baidu-web-server
+# 服务启动在 http://localhost:5200
+```
+
+#### API 接口
+
+**1. 分享链接转直链**
+
+```bash
+POST /api/convert
+Content-Type: application/json
+
+{
+  "link": "https://pan.baidu.com/s/1xxxxx",
+  "pwd": "提取码(可选)",
+  "token": "your-secret-password"
+}
+```
+
+响应：
+```json
+{
+  "success": true,
+  "links": [
+    {
+      "filename": "文件名.pdf",
+      "download_url": "/d/download?fsid=xxx&sign=xxx&expires=xxx&filename=xxx"
+    }
+  ]
+}
+```
+
+**2. 文件/文件夹打包为 ZIP**
+
+```bash
+POST /api/zip
+Content-Type: application/json
+
+{
+  "fsids": [123456789],
+  "archive_name": "archive",
+  "token": "your-secret-password"
+}
+```
+
+响应（小文件）：
+- 直接返回 ZIP 文件流
+
+响应（大文件，超过 `MAX_ZIP_SIZE`）：
+```json
+{
+  "success": true,
+  "total_parts": 3,
+  "total_size": 3221225472,
+  "parts": [
+    {
+      "part_num": 1,
+      "filename": "archive.z01",
+      "size_bytes": 1073741824
+    },
+    {
+      "part_num": 2,
+      "filename": "archive.z02",
+      "size_bytes": 1073741824
+    },
+    {
+      "part_num": 3,
+      "filename": "archive.z03",
+      "size_bytes": 1073741824
+    }
+  ],
+  "message": "文件超过大小限制，已分卷。请分别下载各个 part 文件。"
+}
+```
+
+**3. 健康检查**
+
+```bash
+GET /health
+```
+
+详细使用说明见 [TEST_GUIDE.md](TEST_GUIDE.md)。aidu-direct-link "https://pan.baidu.com/s/1xxxxx"
 
 # 有提取码
 ./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234"
