@@ -14,32 +14,32 @@
 
 ## 项目说明
 
-- 本项目为学习/研究性质的 Rust 命令行工具，功能聚焦在“分享链接转存”。
-- 使用你自己的百度账号 Cookie（BDUSS/STOKEN）在本地发起请求；请自行评估并遵守百度网盘相关服务条款。
+这是一个学习/研究性质的 Rust 命令行工具，用于将**百度网盘分享链接**中的文件/文件夹**转存**到你自己的网盘目录。
+
+工作方式：你在本地运行程序，它会携带你自己的 BDUSS/STOKEN 去请求百度网盘相关接口。
+
+请自行评估并遵守百度网盘相关服务条款。
 
 ## 功能特性
 
 - 支持带/不带提取码的分享链接
-- 自动拉取分享列表并发起转存
+- 自动拉取分享内文件列表并发起转存
 - 可配置转存保存路径与 HTTP 超时
-- 支持 Docker 运行
+- 支持从源码运行 / Docker（从源码运行）
 
 ## 快速开始
 
 ### 方式一：从 Release 下载（二进制）
 
-1) 下载并解压对应平台的二进制：
+1) 下载 Release 中的二进制文件：
 
 https://github.com/Develata/BaiduPCS-Relay-RS/releases
 
-2) 创建配置文件：
+2) 准备配置文件（推荐从示例复制）：
 
-```toml
-[baidu]
-cookie_bduss = "你的BDUSS"
-cookie_stoken = "你的STOKEN"
-save_path = "/我的资源"
-http_timeout_secs = 30
+```bash
+cp config.example.toml config.toml
+# 编辑 config.toml，填入 BDUSS / STOKEN
 ```
 
 3) 运行：
@@ -48,90 +48,67 @@ http_timeout_secs = 30
 ./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
 ```
 
-### 方式二：从源码编译
+### 方式二：从源码编译运行
 
 ```bash
 git clone https://github.com/Develata/BaiduPCS-Relay-RS.git
 cd BaiduPCS-Relay-RS
 
-cargo build --release
-
 cp config.example.toml config.toml
-# 编辑 config.toml 填入你的 Cookie
+# 编辑 config.toml，填入 BDUSS / STOKEN
 
+cargo run -- "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
+```
+
+（可选）编译 release：
+
+```bash
+cargo build --release
 ./target/release/baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
 ```
 
 ## 配置说明
 
-配置文件默认读取当前目录的 config.toml，也可以在命令行第 3 个参数指定路径。
+默认读取当前目录的 `config.toml`，也可以在命令行第 3 个参数指定路径。
+
+配置示例见 config.example.toml；当前分支只需要以下字段：
 
 ```toml
 [baidu]
-# 必填：百度网盘 BDUSS（建议从浏览器 Cookie 原样复制）
 cookie_bduss = "YOUR_BDUSS"
-
-# 必填：百度网盘 STOKEN
 cookie_stoken = "YOUR_STOKEN"
 
-# 必填：转存保存路径（网盘目录，需要你提前创建）
+# 转存保存路径（网盘目录，需要你提前创建）
 save_path = "/我的资源"
 
-# 可选：HTTP 请求超时时间（秒）
+# HTTP 请求超时（秒）
 http_timeout_secs = 30
 ```
 
 ## 使用方法
 
 ```bash
-./baidu-direct-link <分享链接> [提取码] [配置文件路径]
+baidu-direct-link <share_url> [pwd] [config_path]
 
 # 无提取码
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx"
+baidu-direct-link "https://pan.baidu.com/s/1xxxxx"
 
 # 有提取码
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234"
+baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234"
 
 # 指定配置文件路径
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234" "/path/to/config.toml"
+baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234" "/path/to/config.toml"
 ```
 
-### 批量转存（脚本示例）
+## Docker 运行（从源码）
+
+仓库提供 docker-compose.yml，用于在容器中直接 `cargo run`（更适合本地开发/快速试跑）。
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
+cp config.example.toml config.toml
+# 编辑 config.toml，填入 BDUSS / STOKEN
 
-items=(
-  "https://pan.baidu.com/s/1xxxx|1234"
-  "https://pan.baidu.com/s/1yyyy|5678"
-  "https://pan.baidu.com/s/1zzzz|"
-)
-
-for item in "${items[@]}"; do
-  IFS='|' read -r link pwd <<< "$item"
-  echo "转存: $link"
-  ./baidu-direct-link "$link" "$pwd"
-  sleep 2
-done
-```
-
-## 诊断
-
-仓库自带 diagnose.sh，可用于快速检查配置/连通性：
-
-```bash
-chmod +x diagnose.sh
-./diagnose.sh
-```
-
-## Docker 运行
-
-仓库包含 docker-compose.yml，可将本地 config.toml 以只读方式挂载到容器：
-
-```bash
-docker-compose build
-docker-compose run --rm baidu-transfer "https://pan.baidu.com/s/1xxxxx" "1234"
+docker compose run --rm app bash -lc "cargo run -- 'https://pan.baidu.com/s/1xxxxx' '1234' 'config.toml'"
 ```
 
 ## 安全提示
@@ -227,12 +204,9 @@ chmod 600 config.toml
 - 存储: 50 MB
 
 ### 支持平台
-- ✅ Linux (x86_64, aarch64, armv7)
-- ✅ macOS (Intel, Apple Silicon)
-- ✅ Windows (x86_64)
-- ✅ Docker / Podman
-- ✅ 树莓派 (Raspberry Pi)
-- ✅ OpenWrt / 路由器
+- 运行二进制：取决于 Release 提供的构建产物
+- 从源码编译：Rust 支持的平台（取决于本地工具链与依赖）
+- Docker / Podman：使用 docker compose 在容器内从源码运行
 
 ## 常见问题
 
