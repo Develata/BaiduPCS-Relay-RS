@@ -102,7 +102,7 @@ pub async fn login_handler(
         cookie.set_path("/");
         cookie.set_max_age(time::Duration::days(30));
         cookie.set_http_only(true); // 防止 JavaScript 访问，提高安全性
-        // 注意：Secure 标志仅在 HTTPS 环境下启用，HTTP 环境下不设置
+                                    // 注意：Secure 标志仅在 HTTPS 环境下启用，HTTP 环境下不设置
         cookies = cookies.add(cookie);
         (
             cookies,
@@ -222,20 +222,15 @@ pub async fn transfer_handler(
     };
 
     // 获取分享信息
-    let info = match baidupcs::get_share_info(
-        state.as_ref(),
-        &req.share_url,
-        &surl,
-        &req.pwd,
-    )
-    .await
+    let info = match baidupcs::get_share_info(state.as_ref(), &req.share_url, &surl, &req.pwd).await
     {
         Ok(info) => info,
         Err(e) => {
             error!("❌ 获取分享信息失败: {}", e);
             // 提供更友好的错误消息
             let error_msg = e.to_string();
-            let user_friendly_msg = if error_msg.contains("提取码") || error_msg.contains("密码") {
+            let user_friendly_msg = if error_msg.contains("提取码") || error_msg.contains("密码")
+            {
                 "提取码错误，请检查后重试".to_string()
             } else if error_msg.contains("失效") || error_msg.contains("过期") {
                 "分享链接已失效或过期".to_string()
@@ -283,15 +278,19 @@ pub async fn transfer_handler(
             error!("❌ 转存失败: {}", e);
             // 提供更友好的错误消息
             let error_msg = e.to_string();
-            let user_friendly_msg = if error_msg.contains("路径不存在") || error_msg.contains("路径错误") {
-                format!("保存路径不存在: {}，请在百度网盘中先创建该文件夹", state.config.baidu.save_path)
-            } else if error_msg.contains("Cookie") || error_msg.contains("登录") {
-                "Cookie 失效，请检查配置文件中的 BDUSS 和 STOKEN".to_string()
-            } else if error_msg.contains("权限") {
-                "权限不足，可能是分享链接已失效或设置了权限限制".to_string()
-            } else {
-                error_msg
-            };
+            let user_friendly_msg =
+                if error_msg.contains("路径不存在") || error_msg.contains("路径错误") {
+                    format!(
+                        "保存路径不存在: {}，请在百度网盘中先创建该文件夹",
+                        state.config.baidu.save_path
+                    )
+                } else if error_msg.contains("Cookie") || error_msg.contains("登录") {
+                    "Cookie 失效，请检查配置文件中的 BDUSS 和 STOKEN".to_string()
+                } else if error_msg.contains("权限") {
+                    "权限不足，可能是分享链接已失效或设置了权限限制".to_string()
+                } else {
+                    error_msg
+                };
             Ok(Json(TransferResponse {
                 success: false,
                 message: format!("转存失败: {}", user_friendly_msg),
@@ -358,7 +357,11 @@ mod tests {
         ];
 
         for url in valid_urls {
-            assert!(validate_share_url(url).is_ok(), "URL should be valid: {}", url);
+            assert!(
+                validate_share_url(url).is_ok(),
+                "URL should be valid: {}",
+                url
+            );
         }
     }
 
@@ -373,7 +376,11 @@ mod tests {
         ];
 
         for url in invalid_urls {
-            assert!(validate_share_url(url).is_err(), "URL should be invalid: {}", url);
+            assert!(
+                validate_share_url(url).is_err(),
+                "URL should be invalid: {}",
+                url
+            );
         }
     }
 
@@ -382,7 +389,11 @@ mod tests {
         let valid_passwords = vec!["", "1234", "abcd", "A1B2", "test"];
 
         for pwd in valid_passwords {
-            assert!(validate_password(pwd).is_ok(), "Password should be valid: {}", pwd);
+            assert!(
+                validate_password(pwd).is_ok(),
+                "Password should be valid: {}",
+                pwd
+            );
         }
     }
 
@@ -391,7 +402,11 @@ mod tests {
         let invalid_passwords = vec!["123", "12345", "abc", "12"];
 
         for pwd in invalid_passwords {
-            assert!(validate_password(pwd).is_err(), "Password should be invalid: {}", pwd);
+            assert!(
+                validate_password(pwd).is_err(),
+                "Password should be invalid: {}",
+                pwd
+            );
         }
     }
 

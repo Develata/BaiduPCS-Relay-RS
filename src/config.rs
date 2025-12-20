@@ -40,7 +40,7 @@ impl Config {
     /// 优先级：环境变量 > 配置文件
     pub fn load(path: &str) -> Result<Self> {
         let mut config = if std::path::Path::new(path).exists() {
-        let content = fs::read_to_string(path)?;
+            let content = fs::read_to_string(path)?;
             toml::from_str(&content)?
         } else {
             // 如果文件不存在，从环境变量创建默认配置

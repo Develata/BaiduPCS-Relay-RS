@@ -24,7 +24,10 @@ async fn create_remote_dir(state: &AppState, path: &str, bdstoken: &str) -> Resu
         .post(&url)
         .header("User-Agent", Config::browser_ua())
         .header("Referer", "https://pan.baidu.com/")
-        .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        .header(
+            "Content-Type",
+            "application/x-www-form-urlencoded; charset=UTF-8",
+        )
         .send()
         .await?;
 
@@ -40,14 +43,17 @@ async fn create_remote_dir(state: &AppState, path: &str, bdstoken: &str) -> Resu
         err_msg: Option<String>,
     }
 
-    let res: CreateResponse =
-        serde_json::from_str(&text).map_err(|e| anyhow!("解析 create 响应失败: {}, body={}", e, text))?;
+    let res: CreateResponse = serde_json::from_str(&text)
+        .map_err(|e| anyhow!("解析 create 响应失败: {}, body={}", e, text))?;
 
     if res.errno == 0 {
         info!("✅ 远程目录创建成功: {}", path);
         Ok(true)
     } else {
-        warn!("❌ 远程目录创建失败 (errno={}): {:?}", res.errno, res.err_msg);
+        warn!(
+            "❌ 远程目录创建失败 (errno={}): {:?}",
+            res.errno, res.err_msg
+        );
         Ok(false)
     }
 }
@@ -189,7 +195,10 @@ pub async fn transfer_files(
     let result: TransferResult =
         serde_json::from_str(&text).map_err(|e| anyhow!("解析响应失败: {}, body: {}", e, text))?;
     // 记录更多响应细节，便于诊断
-    debug!("🔍 转存响应详情: errno={}, request_id={:?}, newno='{}', show_msg='{}'", result.errno, result.request_id, result.newno, result.show_msg);
+    debug!(
+        "🔍 转存响应详情: errno={}, request_id={:?}, newno='{}', show_msg='{}'",
+        result.errno, result.request_id, result.newno, result.show_msg
+    );
 
     // 详细的 errno 处理
     match result.errno {
@@ -226,7 +235,8 @@ pub async fn transfer_files(
                             if created {
                                 info!("✅ 子目录创建成功，尝试在新目录执行转存...");
                                 // 重试转存到 new_dir
-                                let retry_params = [("fsidlist", fsidlist.as_str()), ("path", new_dir.as_str())];
+                                let retry_params =
+                                    [("fsidlist", fsidlist.as_str()), ("path", new_dir.as_str())];
                                 let retry_resp = state
                                     .client
                                     .post(&url)
@@ -238,7 +248,10 @@ pub async fn transfer_files(
                                         "Content-Type",
                                         "application/x-www-form-urlencoded; charset=UTF-8",
                                     )
-                                    .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                                    .header(
+                                        "Accept",
+                                        "application/json, text/javascript, */*; q=0.01",
+                                    )
                                     .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                                     .header("X-Requested-With", "XMLHttpRequest")
                                     .form(&retry_params)
@@ -246,27 +259,42 @@ pub async fn transfer_files(
                                     .await?;
                                 let retry_text = retry_resp.text().await?;
                                 info!("📨 重试转存响应: {}", retry_text);
-                                let retry_result: TransferResult = serde_json::from_str(&retry_text)
-                                    .map_err(|e| anyhow!("解析重试响应失败: {}, body: {}", e, retry_text))?;
+                                let retry_result: TransferResult =
+                                    serde_json::from_str(&retry_text).map_err(|e| {
+                                        anyhow!("解析重试响应失败: {}, body: {}", e, retry_text)
+                                    })?;
                                 if retry_result.errno == 0 || (retry_result.errno == 12) {
                                     info!("✅ 重试转存成功 (errno={})", retry_result.errno);
                                     return Ok(());
                                 } else {
-                                    error!("❌ 重试转存仍然失败: errno={}, show_msg={}", retry_result.errno, retry_result.show_msg);
+                                    error!(
+                                        "❌ 重试转存仍然失败: errno={}, show_msg={}",
+                                        retry_result.errno, retry_result.show_msg
+                                    );
                                     return Err(anyhow!("重试转存失败: {}", retry_result.show_msg));
                                 }
                             } else {
                                 error!("❌ 子目录创建返回失败，无法重试转存");
-                                return Err(anyhow!("文件已存在，且无法创建子目录重试: {}", result.show_msg));
+                                return Err(anyhow!(
+                                    "文件已存在，且无法创建子目录重试: {}",
+                                    result.show_msg
+                                ));
                             }
                         }
                         Err(e) => {
                             error!("❌ 创建子目录失败: {}", e);
-                            return Err(anyhow!("文件已存在，且创建子目录失败: {} ({})", result.show_msg, e));
+                            return Err(anyhow!(
+                                "文件已存在，且创建子目录失败: {} ({})",
+                                result.show_msg,
+                                e
+                            ));
                         }
                     }
                 } else {
-                    info!("📁 文件已存在（已创建副本 newno={}），转存完成", result.newno);
+                    info!(
+                        "📁 文件已存在（已创建副本 newno={}），转存完成",
+                        result.newno
+                    );
                     info!("💡 提示: {}", result.show_msg);
                     Ok(())
                 }

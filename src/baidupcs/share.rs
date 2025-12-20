@@ -249,8 +249,7 @@ fn extract_share_ids(html: &str) -> Result<(String, String)> {
     // share/init 页面里可能出现多个 shareid/uk，取"数字最长"的那个，避免误抓到很小的数字（如 5）
     static SHAREID_RE: OnceLock<Regex> = OnceLock::new();
     let shareid_re = SHAREID_RE.get_or_init(|| {
-        Regex::new(r"shareid\D*?(\d+)")
-            .expect("shareid 正则表达式编译失败（这是程序错误，请报告）")
+        Regex::new(r"shareid\D*?(\d+)").expect("shareid 正则表达式编译失败（这是程序错误，请报告）")
     });
     let shareid = shareid_re
         .captures_iter(html)
@@ -260,8 +259,7 @@ fn extract_share_ids(html: &str) -> Result<(String, String)> {
 
     static UK_RE: OnceLock<Regex> = OnceLock::new();
     let uk_re = UK_RE.get_or_init(|| {
-        Regex::new(r"uk\D*?(\d+)")
-            .expect("uk 正则表达式编译失败（这是程序错误，请报告）")
+        Regex::new(r"uk\D*?(\d+)").expect("uk 正则表达式编译失败（这是程序错误，请报告）")
     });
     let uk = uk_re
         .captures_iter(html)

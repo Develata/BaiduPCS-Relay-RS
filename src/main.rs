@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     // 加载配置（支持环境变量）
     let config = Config::load(&config_path)?;
     if std::path::Path::new(&config_path).exists() {
-    tracing::info!("✅ 配置加载完成: {}", config_path);
+        tracing::info!("✅ 配置加载完成: {}", config_path);
     } else {
         tracing::info!("✅ 配置从环境变量加载");
     }
