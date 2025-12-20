@@ -1,0 +1,67 @@
+/target/
+config.toml
+config.local.toml
+config.*.local.toml
+*.log
+*.log.*
+.logs/
+.env
+.env.*
+.DS_Store
+
+# Rust
+**/*.rs.bk
+*.pdb
+*.dSYM/
+
+# Profiling / coverage
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+coverage/
+
+# 本地分析/打包产物
+repomix-output.xml
+check.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.bak.*
+*.orig
+*.rej
+
+# docker & 容器相关本地文件
+docker-compose.override.yml
+docker-compose.local.yml
+podman-compose.override.yml
+podman-compose.local.yml
+share_page.html
+# 容器镜像标签（本地构建的镜像）
+*.container
+
+# Windows 资源管理器下载残留
+*:Zone.Identifier
+
+# 编辑器
+.vscode/
+.idea/
+.envrc
+.tool-versions
+
+# Cargo 本地配置（可能包含代理设置）
+.cargo/config.toml
+.cargo/config
+
+# Token文件
+token.json
+*.encrypted
+
+# Release 二进制文件
+release/
+*.exe
+baidu-direct-link
+baidu-direct-link-web
+

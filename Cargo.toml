@@ -1,0 +1,60 @@
+[package]
+name = "baidu-direct-link"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "百度网盘分享链接转存 CLI（基于 BDUSS/STOKEN）"
+readme = "README.md"
+keywords = ["baidu", "baidupan", "pan", "transfer", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "baidu-direct-link"
+path = "src/main.rs"
+
+[[bin]]
+name = "baidu-direct-link-web"
+path = "src/main_web.rs"
+
+[lib]
+name = "baidu_direct_link"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# HTTP 客户端
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# 错误处理
+anyhow = "1"
+
+# 正则（用于提取 shareid/uk/bdstoken）
+regex = "1"
+
+urlencoding = "2.1"
+url = "2.5"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Web 服务器
+axum = { version = "0.7", features = ["multipart", "form"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
+axum-extra = { version = "0.9", features = ["cookie"] }
+time = "0.3"
+chrono = { version = "0.4", features = ["alloc", "serde"] }
+
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,20 @@
+{
+  "name": "Rust Pan Server",
+  "image": "rust:1.91",
+  
+  // 代理配置（可选）
+  // 如果需要使用代理，取消注释并修改以下配置
+  // "containerEnv": {
+  //   "http_proxy": "http://proxy.example.com:8080",
+  //   "https_proxy": "http://proxy.example.com:8080",
+  //   "HTTP_PROXY": "http://proxy.example.com:8080",
+  //   "HTTPS_PROXY": "http://proxy.example.com:8080",
+  //   "NO_PROXY": "localhost,127.0.0.1,::1"
+  // },
+
+  "customizations": {
+    // ... 其他配置保持不变 ...
+  },
+  "remoteUser": "root",
+  "postCreateCommand": "apt-get update && apt-get install -y pkg-config libssl-dev"
+}

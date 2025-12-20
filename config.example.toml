@@ -1,0 +1,17 @@
+[baidu]
+# 仅保留转存所需配置
+
+# 获取方法：浏览器登录百度网盘 -> F12 开发者工具 -> Application -> Cookies -> BDUSS / STOKEN
+cookie_bduss = "YOUR_BDUSS"
+cookie_stoken = "YOUR_STOKEN"
+
+# 转存保存路径（网盘目录）
+save_path = "/我的资源"
+
+# HTTP 请求超时（秒）
+http_timeout_secs = 30
+
+[web]
+# Web 界面访问密码（可选，如果为空则不需要登录）
+# 建议设置强密码以保护 Web 界面
+password = ""

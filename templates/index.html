@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>百度网盘转存工具</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 2em;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .loading {
+            text-align: center;
+            color: #667eea;
+            margin-top: 20px;
+            display: none;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📦 百度网盘转存工具</h1>
+        <p class="subtitle">输入分享链接和提取码，自动转存到你的网盘</p>
+        
+        <div class="info">
+            💡 提示：转存的文件将保存到配置文件中指定的路径（默认：/我的资源）
+        </div>
+
+        <div style="text-align: right; margin-bottom: 10px;">
+            <button onclick="logout()" style="width: auto; padding: 8px 16px; font-size: 14px; background: #dc3545;">退出登录</button>
+            </div>
+
+        <form id="transferForm">
+            <div class="form-group">
+                <label for="shareUrl">分享链接 *</label>
+                <input 
+                    type="text" 
+                    id="shareUrl" 
+                    name="share_url" 
+                    placeholder="https://pan.baidu.com/s/1xxxxx" 
+                    required
+                >
+            </div>
+            <div class="form-group">
+                <label for="pwd">提取码（可选）</label>
+                <input 
+                    type="text" 
+                    id="pwd" 
+                    name="pwd" 
+                    placeholder="若有提取码请输入"
+                    maxlength="4"
+                >
+            </div>
+            <button type="submit" id="submitBtn">开始转存</button>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>正在处理转存请求，请稍候...</div>
+        </div>
+
+        <div class="result" id="result"></div>
+    </div>
+
+    <script>
+        const form = document.getElementById('transferForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const loading = document.getElementById('loading');
+        const result = document.getElementById('result');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            // 获取表单数据
+            const shareUrl = document.getElementById('shareUrl').value.trim();
+            const pwd = document.getElementById('pwd').value.trim();
+
+            if (!shareUrl) {
+                showResult('error', '请输入分享链接');
+                return;
+            }
+
+            // 显示加载状态
+            submitBtn.disabled = true;
+            loading.style.display = 'block';
+            result.style.display = 'none';
+
+            try {
+                // 添加超时控制（5分钟）
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
+                const response = await fetch('/api/transfer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        share_url: shareUrl,
+                        pwd: pwd || '',
+                    }),
+                    signal: controller.signal,
+                    credentials: 'include', // 包含 cookie
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                // 检查是否需要登录
+                if (data.message && data.message.includes('未登录')) {
+                    showResult('error', '登录已过期，请重新登录');
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 2000);
+                    return;
+                }
+
+                if (data.success) {
+                    let message = data.message;
+                    if (data.file_count) {
+                        message += `\n文件数量: ${data.file_count}`;
+                    }
+                    if (data.save_path) {
+                        message += `\n保存路径: ${data.save_path}`;
+                    }
+                    showResult('success', message);
+                } else {
+                    showResult('error', data.message || '转存失败');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                let errorMessage = '网络错误';
+                if (error.name === 'AbortError') {
+                    errorMessage = '请求超时，请检查网络连接或稍后重试';
+                } else if (error.message) {
+                    errorMessage = error.message;
+                }
+                showResult('error', errorMessage);
+            } finally {
+                submitBtn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+
+        function showResult(type, message) {
+            result.className = `result ${type}`;
+            // 将换行符转换为 <br> 标签，改善显示
+            result.innerHTML = message.replace(/\n/g, '<br>');
+            result.style.display = 'block';
+            
+            // 滚动到结果区域
+            result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            
+            // 如果是成功，5秒后可以清空表单
+            if (type === 'success') {
+                setTimeout(() => {
+                    form.reset();
+                    result.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // 添加 URL 格式验证
+        document.getElementById('shareUrl').addEventListener('blur', function() {
+            const url = this.value.trim();
+            if (url && !url.includes('pan.baidu.com/s/')) {
+                this.setCustomValidity('请输入有效的百度网盘分享链接');
+            } else {
+                this.setCustomValidity('');
+            }
+        });
+
+        // 提取码输入限制（只允许字母和数字，最多4位）
+        document.getElementById('pwd').addEventListener('input', function() {
+            this.value = this.value.replace(/[^a-zA-Z0-9]/g, '').substring(0, 4);
+        });
+    
+        // 登出：调用后端清除认证 cookie 并跳转到登录页
+        async function logout() {
+            try {
+                await fetch('/api/logout', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            } catch (e) {
+                console.warn('登出请求失败，仍将跳转到登录页', e);
+            } finally {
+                window.location.href = '/login';
+            }
+        }
+    </script>
+</body>
+</html>
+
