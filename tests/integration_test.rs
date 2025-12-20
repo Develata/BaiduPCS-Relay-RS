@@ -5,9 +5,9 @@ use baidu_direct_link::baidupcs;
 #[test]
 fn test_extract_surl_valid() {
     let test_cases = vec![
-        ("https://pan.baidu.com/s/1abc123", Some("1abc123")),
-        ("https://pan.baidu.com/s/1xxxxx?pwd=1234", Some("1xxxxx")),
-        ("http://pan.baidu.com/s/1test", Some("1test")),
+        ("https://pan.baidu.com/s/1abc123", Some(String::from("1abc123"))),
+        ("https://pan.baidu.com/s/1xxxxx?pwd=1234", Some(String::from("1xxxxx"))),
+        ("http://pan.baidu.com/s/1test", Some(String::from("1test"))),
     ];
 
     for (url, expected) in test_cases {

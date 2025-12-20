@@ -311,7 +311,7 @@ pub fn validate_share_url(url: &str) -> Result<()> {
     let parsed = Url::parse(url).map_err(|_| anyhow!("无效的 URL 格式"))?;
 
     // 检查是否是百度网盘链接
-    if !parsed.host_str().map_or(false, |h| h.contains("baidu.com")) {
+    if !parsed.host_str().is_some_and(|h| h.contains("baidu.com")) {
         return Err(anyhow!("必须是百度网盘分享链接"));
     }
 

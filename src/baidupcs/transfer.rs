@@ -38,7 +38,7 @@ async fn create_remote_dir(state: &AppState, path: &str, bdstoken: &str) -> Resu
     struct CreateResponse {
         errno: i32,
         #[serde(default)]
-        request_id: Option<u64>,
+        _request_id: Option<u64>,
         #[serde(default)]
         err_msg: Option<String>,
     }
@@ -230,6 +230,7 @@ pub async fn transfer_files(
                     let timestamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
                     let new_dir = format!("{}/copy-{}", savepath.trim_end_matches('/'), timestamp);
                     info!("🔁 尝试创建子目录并重试转存: {}", new_dir);
+                    // 尝试创建子目录并作为该 if 分支的最终表达式返回结果
                     match create_remote_dir(state, &new_dir, bdstoken).await {
                         Ok(created) => {
                             if created {
@@ -265,29 +266,29 @@ pub async fn transfer_files(
                                     })?;
                                 if retry_result.errno == 0 || (retry_result.errno == 12) {
                                     info!("✅ 重试转存成功 (errno={})", retry_result.errno);
-                                    return Ok(());
+                                    Ok(())
                                 } else {
                                     error!(
                                         "❌ 重试转存仍然失败: errno={}, show_msg={}",
                                         retry_result.errno, retry_result.show_msg
                                     );
-                                    return Err(anyhow!("重试转存失败: {}", retry_result.show_msg));
+                                    Err(anyhow!("重试转存失败: {}", retry_result.show_msg))
                                 }
                             } else {
                                 error!("❌ 子目录创建返回失败，无法重试转存");
-                                return Err(anyhow!(
+                                Err(anyhow!(
                                     "文件已存在，且无法创建子目录重试: {}",
                                     result.show_msg
-                                ));
+                                ))
                             }
                         }
                         Err(e) => {
                             error!("❌ 创建子目录失败: {}", e);
-                            return Err(anyhow!(
+                            Err(anyhow!(
                                 "文件已存在，且创建子目录失败: {} ({})",
                                 result.show_msg,
                                 e
-                            ));
+                            ))
                         }
                     }
                 } else {

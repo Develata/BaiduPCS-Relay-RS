@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     let pwd = args.get(2).cloned().unwrap_or_default();
     let config_path = std::env::var("CONFIG_PATH")
         .ok()
-        .or_else(|| args.get(3).map(|s| s.clone()))
+        .or_else(|| args.get(3).cloned())
         .unwrap_or_else(|| "config.toml".to_string());
 
     // 加载配置（支持环境变量）
