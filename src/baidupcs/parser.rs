@@ -11,10 +11,7 @@ pub fn extract_surl(share_url: &str) -> Option<String> {
 
     // 如果是完整 URL，优先解析并确保主机是 baidu.com，否则视为无效
     if let Ok(parsed) = url::Url::parse(url) {
-        if !parsed
-            .host_str()
-            .is_some_and(|h| h.contains("baidu.com"))
-        {
+        if !parsed.host_str().is_some_and(|h| h.contains("baidu.com")) {
             return None;
         }
     }
