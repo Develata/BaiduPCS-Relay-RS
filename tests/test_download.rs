@@ -132,41 +132,16 @@ async fn test_generate_signed_links_only() -> Result<()> {
     // 3. 通过已有逻辑拿到 (filename, 原始 PCS 直链)，这里只用 filename
     let links = baidupcs::download::get_download_links(state.as_ref(), &test_fs_ids).await?;
 
-    for (filename, _url) in links.into_iter() {
-        let full_path = format!("{}/{}", save_path.trim_end_matches('/'), filename);
-        let local_link = crate_like_generate_signed_link_for_test(&sign_secret, &full_path, 3600);
+    for (index, (filename, _url)) in links.into_iter().enumerate() {
+        let local_link = baidu_direct_link::signing::generate_signed_download(
+            &sign_secret,
+            test_fs_ids[index],
+            &filename,
+            3600,
+        )?;
         println!("📄 {}", filename);
-        println!("   本地直链: {}\n", local_link);
+        println!("   本地直链: {}\n", local_link.url);
     }
 
     Ok(())
-}
-
-/// 与 web_server 中的 generate_signed_link 保持一致，用于测试
-fn crate_like_generate_signed_link_for_test(
-    sign_secret: &str,
-    pan_path: &str,
-    ttl_secs: u64,
-) -> String {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine;
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let expires = now + ttl_secs;
-
-    let data = format!("{pan_path}:{expires}");
-
-    let mut mac = Hmac::<Sha256>::new_from_slice(sign_secret.as_bytes())
-        .expect("HMAC can take key of any size");
-    mac.update(data.as_bytes());
-    let result = mac.finalize().into_bytes();
-    let sign = URL_SAFE_NO_PAD.encode(result);
-
-    format!("/d{}?sign={sign}&expires={expires}", pan_path)
 }

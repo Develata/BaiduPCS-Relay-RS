@@ -207,9 +207,40 @@ async fn get_file_list(
     surl: &str,
     bdstoken: &str,
 ) -> Result<(Vec<u64>, Vec<String>)> {
+    const PAGE_SIZE: usize = 1000;
+    let mut page = 1;
+    let mut fs_ids = Vec::new();
+    let mut filenames = Vec::new();
+
+    loop {
+        let list = get_file_list_page(state, shareid, uk, surl, bdstoken, page, PAGE_SIZE).await?;
+        let count = list.len();
+        for file in list {
+            fs_ids.push(file.get_fsid());
+            filenames.push(file.server_filename);
+        }
+
+        if count < PAGE_SIZE {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok((fs_ids, filenames))
+}
+
+async fn get_file_list_page(
+    state: &AppState,
+    shareid: &str,
+    uk: &str,
+    surl: &str,
+    bdstoken: &str,
+    page: usize,
+    page_size: usize,
+) -> Result<Vec<FileItem>> {
     let url = format!(
-        "https://pan.baidu.com/share/list?shareid={}&uk={}&shorturl={}&root=1&dir=%2F&page=1&num=1000&order=name&desc=1&showempty=0&web=1&channel=chunlei&clienttype=0&bdstoken={}",
-        shareid, uk, surl, bdstoken
+        "https://pan.baidu.com/share/list?shareid={}&uk={}&shorturl={}&root=1&dir=%2F&page={}&num={}&order=name&desc=1&showempty=0&web=1&channel=chunlei&clienttype=0&bdstoken={}",
+        shareid, uk, surl, page, page_size, bdstoken
     );
 
     debug!("📡 调用 list API: {}", url);
@@ -247,15 +278,7 @@ async fn get_file_list(
         ));
     }
 
-    let mut fs_ids = Vec::new();
-    let mut filenames = Vec::new();
-
-    for file in res.list {
-        fs_ids.push(file.get_fsid());
-        filenames.push(file.server_filename);
-    }
-
-    Ok((fs_ids, filenames))
+    Ok(res.list)
 }
 
 /// 从 HTML 中提取 shareid 和 uk

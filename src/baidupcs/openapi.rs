@@ -1,20 +1,21 @@
-//! 百度网盘开放平台 - 只保留 token 刷新功能
+//! 百度网盘开放平台 - token 刷新能力
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use std::fs;
-use tracing::{debug, info, warn};
+use tracing::debug;
 
-use crate::{config::Config, AppState};
+use crate::AppState;
 
-/// 刷新 access_token
+/// 刷新 access_token。
+///
+/// 注意：这里不再写回 config.toml。token 的持久化应由调用者或部署系统负责，
+/// 能力层只返回本次刷新结果，避免业务流程隐式修改配置文件。
 pub async fn refresh_token(state: &AppState) -> Result<String> {
     let opencfg = &state.config.baidu_open;
 
     if opencfg.client_id.is_empty() || opencfg.client_secret.is_empty() {
         return Err(anyhow!("未配置 client_id 和 client_secret"));
     }
-
     if opencfg.refresh_token.is_empty() {
         return Err(anyhow!("未配置 refresh_token"));
     }
@@ -26,8 +27,7 @@ pub async fn refresh_token(state: &AppState) -> Result<String> {
         urlencoding::encode(&opencfg.client_secret),
     );
 
-    debug!("🔄 刷新 access_token...");
-
+    debug!("刷新百度 access_token");
     let resp = state.client.get(&url).send().await?;
     let status = resp.status();
     let text = resp.text().await?;
@@ -60,28 +60,9 @@ pub async fn refresh_token(state: &AppState) -> Result<String> {
             token.error_description.unwrap_or_default()
         ));
     }
-
     if token.access_token.is_empty() {
         return Err(anyhow!("refresh_token 返回空 access_token"));
     }
 
-    if let Err(e) = save_access_token(&token.access_token) {
-        warn!("⚠️ 保存 access_token 失败: {}", e);
-    }
-
     Ok(token.access_token)
-}
-
-fn save_access_token(new_token: &str) -> Result<()> {
-    let path = "config.toml";
-    let content = fs::read_to_string(path)?;
-
-    let mut cfg: Config = toml::from_str(&content)?;
-    cfg.baidu_open.access_token = new_token.to_string();
-
-    let new_content = toml::to_string_pretty(&cfg)?;
-    fs::write(path, new_content)?;
-
-    info!("✅ 已更新 access_token 到配置文件");
-    Ok(())
 }

@@ -30,10 +30,10 @@ async fn main() -> Result<()> {
 
     let share_url = args[1].clone();
     let pwd = args.get(2).cloned().unwrap_or_default();
-    let config_path = args.get(3).map(|s| s.as_str()).unwrap_or("config.toml");
+    let config_path = Config::config_path_from_env_or_arg(args.get(3).cloned());
 
     // 加载配置
-    let config = Config::load(config_path)?;
+    let config = Config::load(&config_path)?;
     tracing::info!("✅ 配置加载完成: {}", config_path);
 
     // 初始化应用状态（仅 Cookie + HTTP client）

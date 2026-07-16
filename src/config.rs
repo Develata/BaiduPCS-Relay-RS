@@ -1,21 +1,24 @@
 //! 配置文件加载
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub baidu: BaiduConfig,
-    #[serde(default)] // ✅ 如果配置文件没有 [web] 就用默认值
+    #[serde(default)]
     pub web: WebConfig,
-    #[serde(default)] // ✅ 百度开放平台 / 本地签名相关配置（预留）
+    #[serde(default)]
     pub baidu_open: BaiduOpenConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BaiduConfig {
+    #[serde(default)]
     pub cookie_bduss: String,
+    #[serde(default)]
     pub cookie_stoken: String,
     #[serde(default = "default_save_path")]
     pub save_path: String,
@@ -23,17 +26,124 @@ pub struct BaiduConfig {
     pub http_timeout_secs: u64,
 }
 
-// ✅ 新增 Web 配置
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct WebConfig {
     #[serde(default = "default_access_token")]
     pub access_token: String,
-    /// 本地直链签名密钥，用于生成 /d/...?...sign= 链接
+    /// 本地直链签名密钥，用于生成 /d/download?...sign= 链接。
     #[serde(default = "default_sign_secret")]
     pub sign_secret: String,
-    /// ZIP 压缩包最大大小限制 (字节)，超过此大小会返回错误。默认 2GB
+    /// v1 暂不提供 ZIP 能力；保留该字段只为配置兼容。
     #[serde(default = "default_max_zip_size")]
     pub max_zip_size: u64,
+}
+
+/// 百度开放平台 / OAuth 相关配置。
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct BaiduOpenConfig {
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+    #[serde(default)]
+    pub redirect_uri: String,
+    #[serde(default)]
+    pub refresh_token: String,
+    #[serde(default)]
+    pub access_token: String,
+}
+
+impl Config {
+    pub fn load(path: &str) -> Result<Self> {
+        let mut config = if Path::new(path).exists() {
+            let content = fs::read_to_string(path)?;
+            toml::from_str(&content)?
+        } else {
+            Config::default()
+        };
+
+        config.apply_env_overrides();
+        Ok(config)
+    }
+
+    pub fn config_path_from_env_or_arg(arg: Option<String>) -> String {
+        std::env::var("CONFIG_PATH")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or(arg)
+            .unwrap_or_else(|| "config.toml".to_string())
+    }
+
+    pub fn validate_web(&self) -> Result<()> {
+        if self.web.access_token.is_empty() || self.web.access_token == "change-me" {
+            return Err(anyhow!(
+                "WEB_ACCESS_TOKEN/[web].access_token 不能为空或使用默认值 change-me"
+            ));
+        }
+        if self.web.sign_secret.is_empty() || self.web.sign_secret == "change-me-sign" {
+            return Err(anyhow!(
+                "WEB_SIGN_SECRET/[web].sign_secret 不能为空或使用默认值 change-me-sign"
+            ));
+        }
+        if self.baidu_open.access_token.is_empty()
+            && (self.baidu_open.refresh_token.is_empty()
+                || self.baidu_open.client_id.is_empty()
+                || self.baidu_open.client_secret.is_empty())
+        {
+            return Err(anyhow!(
+                "Web 直链下载需要配置 BAIDU_ACCESS_TOKEN，或同时配置 BAIDU_REFRESH_TOKEN、BAIDU_CLIENT_ID、BAIDU_CLIENT_SECRET"
+            ));
+        }
+        Ok(())
+    }
+
+    fn apply_env_overrides(&mut self) {
+        override_string(&mut self.baidu.cookie_bduss, "BDUSS");
+        override_string(&mut self.baidu.cookie_stoken, "STOKEN");
+        override_string(&mut self.baidu.save_path, "SAVE_PATH");
+        override_u64(&mut self.baidu.http_timeout_secs, "HTTP_TIMEOUT_SECS");
+
+        override_string(&mut self.web.access_token, "WEB_ACCESS_TOKEN");
+        override_string(&mut self.web.sign_secret, "WEB_SIGN_SECRET");
+        override_u64(&mut self.web.max_zip_size, "MAX_ZIP_SIZE");
+
+        override_string(&mut self.baidu_open.client_id, "BAIDU_CLIENT_ID");
+        override_string(&mut self.baidu_open.client_secret, "BAIDU_CLIENT_SECRET");
+        override_string(&mut self.baidu_open.redirect_uri, "BAIDU_REDIRECT_URI");
+        override_string(&mut self.baidu_open.refresh_token, "BAIDU_REFRESH_TOKEN");
+        override_string(&mut self.baidu_open.access_token, "BAIDU_ACCESS_TOKEN");
+    }
+
+    pub fn app_ua() -> &'static str {
+        "netdisk;2.2.51.6;netdisk;10.0.63;PC;android-android"
+    }
+
+    pub fn browser_ua() -> &'static str {
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    pub fn dlink_ua() -> &'static str {
+        "pan.baidu.com"
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            baidu: BaiduConfig {
+                cookie_bduss: String::new(),
+                cookie_stoken: String::new(),
+                save_path: default_save_path(),
+                http_timeout_secs: default_http_timeout_secs(),
+            },
+            web: WebConfig {
+                access_token: default_access_token(),
+                sign_secret: default_sign_secret(),
+                max_zip_size: default_max_zip_size(),
+            },
+            baidu_open: BaiduOpenConfig::default(),
+        }
+    }
 }
 
 fn default_save_path() -> String {
@@ -45,55 +155,121 @@ fn default_http_timeout_secs() -> u64 {
 }
 
 fn default_access_token() -> String {
-    // ✅ 优先使用环境变量，如果没有就用默认值
-    std::env::var("WEB_ACCESS_TOKEN").unwrap_or_else(|_| "change-me".to_string())
+    "change-me".to_string()
 }
 
 fn default_sign_secret() -> String {
-    std::env::var("WEB_SIGN_SECRET").unwrap_or_else(|_| "change-me-sign".to_string())
+    "change-me-sign".to_string()
 }
 
 fn default_max_zip_size() -> u64 {
-    // 默认 2GB，可通过 MAX_ZIP_SIZE 环境变量覆盖（单位：字节）
-    // 例如: MAX_ZIP_SIZE=1073741824 (1GB) 或 MAX_ZIP_SIZE=2147483648 (2GB)
-    std::env::var("MAX_ZIP_SIZE")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(2 * 1024 * 1024 * 1024) // 2GB default
+    2 * 1024 * 1024 * 1024
 }
 
-/// 百度开放平台 / OAuth 相关配置（当前主要用于对齐 OpenList 策略，后续可扩展）
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct BaiduOpenConfig {
-    /// 百度开放平台应用的 Client ID / API Key
-    #[serde(default)]
-    pub client_id: String,
-    /// 百度开放平台应用的 Client Secret
-    #[serde(default)]
-    pub client_secret: String,
-    /// OAuth 回调地址（如果你在别处完成授权，可留空）
-    #[serde(default)]
-    pub redirect_uri: String,
-    /// 长期有效的 refresh_token（推荐）或 access_token（如果你已有）
-    #[serde(default)]
-    pub refresh_token: String,
-    /// 备用：手动填写的 access_token（优先使用 refresh_token 刷新）
-    #[serde(default)]
-    pub access_token: String,
+fn override_string(target: &mut String, key: &str) {
+    if let Ok(value) = std::env::var(key) {
+        if !value.is_empty() {
+            *target = value;
+        }
+    }
 }
 
-impl Config {
-    pub fn load(path: &str) -> Result<Self> {
-        let content = fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
-        Ok(config)
+fn override_u64(target: &mut u64, key: &str) {
+    if let Ok(value) = std::env::var(key) {
+        if let Ok(parsed) = value.parse::<u64>() {
+            *target = parsed;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn loads_from_env_without_config_file() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_env();
+        set_env("BDUSS", "x".repeat(80));
+        set_env("STOKEN", "y".repeat(40));
+        set_env("SAVE_PATH", "/target");
+        set_env("HTTP_TIMEOUT_SECS", "77");
+        set_env("WEB_ACCESS_TOKEN", "token");
+        set_env("WEB_SIGN_SECRET", "secret");
+        set_env("BAIDU_ACCESS_TOKEN", "baidu-token");
+
+        let config = Config::load("/tmp/baidupcs-relay-nonexistent-config.toml").unwrap();
+        assert_eq!(config.baidu.cookie_bduss, "x".repeat(80));
+        assert_eq!(config.baidu.cookie_stoken, "y".repeat(40));
+        assert_eq!(config.baidu.save_path, "/target");
+        assert_eq!(config.baidu.http_timeout_secs, 77);
+        assert_eq!(config.web.access_token, "token");
+        assert_eq!(config.web.sign_secret, "secret");
+        assert_eq!(config.baidu_open.access_token, "baidu-token");
+
+        clear_env();
     }
 
-    pub fn app_ua() -> &'static str {
-        "netdisk;2.2.51.6;netdisk;10.0.63;PC;android-android"
+    #[test]
+    fn rejects_default_web_secrets() {
+        let config = Config::default();
+        let err = config.validate_web().unwrap_err();
+        assert!(err.to_string().contains("change-me"));
     }
 
-    pub fn browser_ua() -> &'static str {
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    #[test]
+    fn rejects_missing_baidu_open_token_for_web() {
+        let mut config = Config::default();
+        config.web.access_token = "web-token".to_string();
+        config.web.sign_secret = "sign-secret".to_string();
+
+        let err = config.validate_web().unwrap_err();
+        assert!(err.to_string().contains("BAIDU_ACCESS_TOKEN"));
+    }
+
+    #[test]
+    fn accepts_static_baidu_access_token_for_web() {
+        let mut config = Config::default();
+        config.web.access_token = "web-token".to_string();
+        config.web.sign_secret = "sign-secret".to_string();
+        config.baidu_open.access_token = "baidu-token".to_string();
+
+        config.validate_web().unwrap();
+    }
+
+    #[test]
+    fn accepts_refresh_token_source_for_web() {
+        let mut config = Config::default();
+        config.web.access_token = "web-token".to_string();
+        config.web.sign_secret = "sign-secret".to_string();
+        config.baidu_open.client_id = "client-id".to_string();
+        config.baidu_open.client_secret = "client-secret".to_string();
+        config.baidu_open.refresh_token = "refresh-token".to_string();
+
+        config.validate_web().unwrap();
+    }
+
+    fn set_env(key: &str, value: impl AsRef<str>) {
+        std::env::set_var(key, value.as_ref());
+    }
+
+    fn clear_env() {
+        for key in [
+            "BDUSS",
+            "STOKEN",
+            "SAVE_PATH",
+            "HTTP_TIMEOUT_SECS",
+            "WEB_ACCESS_TOKEN",
+            "WEB_SIGN_SECRET",
+            "BAIDU_CLIENT_ID",
+            "BAIDU_CLIENT_SECRET",
+            "BAIDU_REFRESH_TOKEN",
+            "BAIDU_ACCESS_TOKEN",
+        ] {
+            std::env::remove_var(key);
+        }
     }
 }

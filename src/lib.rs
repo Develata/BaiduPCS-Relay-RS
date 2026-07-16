@@ -2,9 +2,14 @@
 
 pub mod baidupcs;
 pub mod config;
+pub mod direct_link;
+pub mod error;
+pub mod signing;
 pub mod state;
 
 pub use config::Config;
+pub use error::AppError;
+pub use signing::SignedDownload;
 pub use state::AppState;
 
 /// 库版本

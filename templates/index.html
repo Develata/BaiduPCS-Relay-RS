@@ -241,23 +241,23 @@
                 
                 const res = await response.json();
                 
-                if (res.success && res.links) {
+                if (res.success && res.items) {
                     result.innerHTML = `
                         <div class="success">
-                            <h3>✅ 成功获取 ${res.links.length} 个下载链接</h3>
-                            ${res.links.map((file, i) => `
+                            <h3>✅ 成功获取 ${res.items.length} 个下载链接</h3>
+                            ${res.items.map((file, i) => `
                                 <div class="file-item">
                                     <div class="file-name">📄 ${escapeHtml(file.filename)}</div>
                                      <div class="file-link" id="link-${i}">${escapeHtml(window.location.origin + file.download_url)}</div>
                                     <div class="btn-group">
                                         <button class="copy-btn" onclick="copyLink(${i})">📋 复制链接</button>
-                                        <button class="copy-btn download-btn" onclick="directDownload(${i}, '${escapeHtml(file.filename).replace(/'/g, "\\'")}')">⬇️ 直接下载</button>
+                                        <button class="copy-btn download-btn" onclick="directDownload(${i})">⬇️ 直接下载</button>
                                     </div>
                                     <div class="progress-bar" id="progress-${i}">
                                         <div class="progress-fill" id="progress-fill-${i}">0%</div>
                                     </div>
                                     <div class="download-tip">
-                                        💡 提示：直接下载可能较慢，建议使用 IDM、aria2 等下载工具配合"复制链接"功能
+                                        💡 提示：链接会先访问本服务的 /d/download，再 302 跳转到百度真实下载地址
                                     </div>
                                 </div>
                             `).join('')}
@@ -267,7 +267,7 @@
                     result.innerHTML = `
                         <div class="error">
                             <h3>❌ 转换失败</h3>
-                            <p>${escapeHtml(res.error || '未知错误')}</p>
+                            <p>${escapeHtml((res.error && res.error.message) || '未知错误')}</p>
                         </div>
                     `;
                 }
@@ -310,85 +310,10 @@
             });
         }
 
-        async function directDownload(index, filename) {
+        function directDownload(index) {
             const element = document.getElementById('link-' + index);
             const url = element.textContent;
-            const progressBar = document.getElementById('progress-' + index);
-            const progressFill = document.getElementById('progress-fill-' + index);
-            
-            progressBar.classList.add('show');
-            progressFill.style.width = '0%';
-            progressFill.textContent = '准备下载...';
-
-            try {
-                // 通过后端代理下载
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url, filename: filename })
-                });
-
-                if (!response.ok) {
-                    throw new Error('下载失败: ' + response.statusText);
-                }
-
-                // 获取文件大小
-                const contentLength = response.headers.get('content-length');
-                const total = parseInt(contentLength, 10);
-                let loaded = 0;
-
-                // 使用 ReadableStream 读取响应
-                const reader = response.body.getReader();
-                const chunks = [];
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    
-                    if (done) break;
-                    
-                    chunks.push(value);
-                    loaded += value.length;
-                    
-                    // 更新进度条
-                    if (total) {
-                        const percent = Math.round((loaded / total) * 100);
-                        progressFill.style.width = percent + '%';
-                        progressFill.textContent = percent + '%';
-                    } else {
-                        progressFill.textContent = '下载中... ' + formatBytes(loaded);
-                    }
-                }
-
-                // 合并所有数据块
-                const blob = new Blob(chunks);
-                
-                // 创建下载链接
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = downloadUrl;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(downloadUrl);
-
-                progressFill.textContent = '✅ 下载完成';
-                setTimeout(() => {
-                    progressBar.classList.remove('show');
-                }, 2000);
-
-            } catch (error) {
-                progressFill.textContent = '❌ 下载失败';
-                progressFill.style.background = '#dc3545';
-                alert('❌ 下载失败: ' + error.message + '\n\n建议：\n1. 复制链接使用专业下载工具\n2. 或稍后重试');
-            }
-        }
-
-        function formatBytes(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+            window.location.href = url;
         }
     </script>
 </body>

@@ -24,6 +24,7 @@ coverage/
 # 本地分析/打包产物
 repomix-output.xml
 check.log
+.codegraph/
 *.tmp
 *.temp
 *.swp

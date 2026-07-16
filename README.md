@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
-百度网盘分享链接转直链服务：支持分享链接转存、Web 服务器、文件打包下载。
+百度网盘分享链接转直链服务：支持分享链接转存、Web 服务器、本地签名下载跳转。
 
 </div>
 
@@ -27,8 +27,8 @@
 
 ### Web 服务器模式
 - ✅ 分享链接转换为直链
-- ✅ 文件/文件夹自动打包为 ZIP
-- ✅ 支持大文件分卷下载（可配置大小限制）
+- ⚠️ v1 暂停服务器端 ZIP 打包（`/api/zip` 返回 501）
+- ✅ 基于官方 `filemetas + dlink` 流程生成本地签名下载链接
 - ✅ 密码保护的 API 接口
 - ✅ 自动递归展开文件夹
 
@@ -59,6 +59,7 @@ access_token = "your-secret-password"
 sign_secret = "your-sign-secret"
 
 [baidu_open]
+# Web 直链下载必填：二选一配置 access_token，或配置 refresh_token + client_id + client_secret
 client_id = ""
 client_secret = ""
 redirect_uri = ""
@@ -122,11 +123,12 @@ access_token = "your-secret-password"
 # 签名密钥（用于生成下载链接签名）
 sign_secret = "your-sign-secret"
 
-# 可选：ZIP 打包大小限制（字节）。超过会按 1GB/分卷进行拆分
-# max_zip_size = 1073741824
+# v1 暂不支持服务器端 ZIP；该字段仅保留配置兼容
+# max_zip_size = 2147483648
 
 [baidu_open]
-# 可选：百度开放平台（如未使用可留空）
+# Web 直链下载必填：百度开放平台 token 来源
+# 二选一：直接填写 access_token，或填写 refresh_token + client_id + client_secret
 client_id = ""
 client_secret = ""
 redirect_uri = ""
@@ -197,55 +199,29 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "links": [
+  "items": [
     {
+      "fsid": 123456,
       "filename": "文件名.pdf",
-      "download_url": "/d/download?fsid=xxx&sign=xxx&expires=xxx&filename=xxx"
-    }
-  ]
-}
-```
-
-**2. 文件/文件夹打包为 ZIP**
-
-```bash
-POST /api/zip
-Content-Type: application/json
-
-{
-  "fsids": [123456789],
-  "archive_name": "archive",
-  "token": "your-secret-password"
-}
-```
-
-响应（小文件）：
-- 直接返回 ZIP 文件流
-
-响应（大文件，超过 `MAX_ZIP_SIZE`）：
-```json
-{
-  "success": true,
-  "total_parts": 3,
-  "total_size": 3221225472,
-  "parts": [
-    {
-      "part_num": 1,
-      "filename": "archive.z01",
-      "size_bytes": 1073741824
-    },
-    {
-      "part_num": 2,
-      "filename": "archive.z02",
-      "size_bytes": 1073741824
-    },
-    {
-      "part_num": 3,
-      "filename": "archive.z03",
-      "size_bytes": 1073741824
+      "download_url": "/d/download?fsid=xxx&expires=xxx&filename=xxx&sign=xxx",
+      "expires": 1234567890
     }
   ],
-  "message": "文件超过大小限制，已分卷。请分别下载各个 part 文件。"
+  "transfer_job": "..."
+}
+```
+
+**2. ZIP 打包**
+
+v1 暂不提供服务器端 ZIP 打包能力。调用 `/api/zip` 会返回 `501`：
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "zip_unsupported",
+    "message": "v1 暂不支持服务器端 ZIP 打包；请使用 /api/convert 获取单文件签名下载链接"
+  }
 }
 ```
 

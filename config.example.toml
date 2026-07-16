@@ -13,11 +13,13 @@ http_timeout_secs = 120
 
 [web]
 access_token = "your-secret-password"  # 设置你的访问密码
-sign_secret = "change-me-sign"        # 本地直链签名密钥，用于 /d/...?...sign=
+sign_secret = "your-sign-secret"      # 本地直链签名密钥，不能使用默认值 change-me-sign
 
 [baidu_open]
-# 以下配置用于后续接入百度开放平台 OAuth / 直链能力（可选）
-# client_id / client_secret 请在百度开放平台应用详情中查看
+# Web /d/download 需要百度开放平台 access_token；二选一：
+# 1. 直接填写 access_token；
+# 2. 填写 refresh_token + client_id + client_secret，由程序启动后按需刷新。
+# client_id / client_secret 请在百度开放平台应用详情中查看。
 client_id = ""
 client_secret = ""
 redirect_uri = ""
@@ -25,5 +27,5 @@ redirect_uri = ""
 # 建议在完成一次 OAuth 授权后，将 refresh_token 填写到这里，程序自行刷新 access_token
 refresh_token = ""
 
-# 如果你已经有一个长期有效的 access_token，也可以直接填在这里（优先级低于 refresh_token）
+# 如果你已经有一个长期有效的 access_token，也可以直接填在这里；有 refresh_token 时会优先刷新，失败后才回退到该值
 access_token = ""

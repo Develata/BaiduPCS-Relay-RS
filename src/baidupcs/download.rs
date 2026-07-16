@@ -1,16 +1,19 @@
-//! 百度网盘下载模块 - OpenList 方案
-//! 通过 OpenAPI 获取直链，支持文件夹自动打包
+//! 百度网盘下载与目录枚举适配层
+//!
+//! 官方下载流程约束：
+//! 1. 使用 `xpan/multimedia?method=filemetas&dlink=1` 获取 dlink；
+//! 2. 使用 dlink 时必须追加 `access_token`；
+//! 3. 请求 dlink 时必须设置 `User-Agent: pan.baidu.com`；
+//! 4. dlink 有 8 小时有效期且存在 302 跳转。
 
 use anyhow::{anyhow, Result};
+use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
-use std::io::Write;
-use tracing::{debug, info, warn};
-use zip::{
-    write::{FileOptions, ZipWriter},
-    CompressionMethod,
-};
+use tracing::debug;
 
+use crate::baidupcs::types::{DownloadTarget, PanEntry};
 use crate::config::Config;
+use crate::error::map_baidu_errno;
 use crate::AppState;
 
 #[derive(Debug, Clone)]
@@ -19,32 +22,82 @@ pub struct FsidMeta {
     pub filename: String,
     pub path: String,
     pub is_dir: bool,
+    pub size: Option<u64>,
+    pub dlink: Option<String>,
 }
 
-/// 查询 fsid 的元信息（用于区分文件/文件夹，并拿到 path）
-pub async fn get_fsid_meta(state: &AppState, fsid: u64, access_token: &str) -> Result<FsidMeta> {
-    let url = format!(
-        "https://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas&fsids=[{}]&dlink=1&access_token={}",
-        fsid,
-        urlencoding::encode(access_token)
-    );
+pub async fn get_or_refresh_access_token(state: &AppState) -> Result<String> {
+    if let Some(token) = state.cached_access_token() {
+        return Ok(token);
+    }
 
-    debug!("🔍 查询文件元信息 fsid={}", fsid);
+    let open_cfg = &state.config.baidu_open;
+    if !open_cfg.refresh_token.is_empty() {
+        match refresh_access_token(state).await {
+            Ok(token) => return Ok(token),
+            Err(err) if !open_cfg.access_token.is_empty() => {
+                debug!("刷新 access_token 失败，回退到静态 access_token: {}", err);
+                return Ok(open_cfg.access_token.clone());
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    if !open_cfg.access_token.is_empty() {
+        return Ok(open_cfg.access_token.clone());
+    }
+    Err(anyhow!("未配置 BAIDU_ACCESS_TOKEN 或 BAIDU_REFRESH_TOKEN"))
+}
+
+pub async fn refresh_access_token(state: &AppState) -> Result<String> {
+    if state.config.baidu_open.refresh_token.is_empty() {
+        return Err(anyhow!("未配置 BAIDU_REFRESH_TOKEN"));
+    }
+
+    let token = crate::baidupcs::openapi::refresh_token(state).await?;
+    state.cache_access_token(token.clone());
+    Ok(token)
+}
+
+pub async fn get_fsid_meta(state: &AppState, fsid: u64, access_token: &str) -> Result<FsidMeta> {
+    let mut metas = get_fsid_metas(state, &[fsid], access_token, true).await?;
+    metas
+        .pop()
+        .ok_or_else(|| anyhow!("filemetas 返回空列表: fsid={}", fsid))
+}
+
+pub async fn get_fsid_metas(
+    state: &AppState,
+    fsids: &[u64],
+    access_token: &str,
+    need_dlink: bool,
+) -> Result<Vec<FsidMeta>> {
+    if fsids.is_empty() {
+        return Err(anyhow!("fsids 不能为空"));
+    }
+    if fsids.len() > 100 {
+        return Err(anyhow!("filemetas 单次最多查询 100 个 fsid"));
+    }
+
+    let fsids_json = serde_json::to_string(fsids)?;
+    let url = format!(
+        "https://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas&access_token={}&fsids={}&dlink={}",
+        urlencoding::encode(access_token),
+        urlencoding::encode(&fsids_json),
+        if need_dlink { 1 } else { 0 }
+    );
 
     let resp = state
         .client
         .get(&url)
-        .header("User-Agent", "pan.baidu.com")
+        .header("User-Agent", Config::dlink_ua())
         .send()
         .await?;
-
     let status = resp.status();
     let text = resp.text().await?;
-
     debug!(
         "filemetas 响应 status={}, body={}",
         status,
-        &text[..text.len().min(300)]
+        &text[..text.len().min(500)]
     );
 
     #[derive(Deserialize)]
@@ -57,192 +110,210 @@ pub async fn get_fsid_meta(state: &AppState, fsid: u64, access_token: &str) -> R
     #[derive(Deserialize)]
     struct FileMetaItem {
         #[serde(default)]
+        fs_id: Option<u64>,
+        #[serde(default)]
+        fsid: Option<u64>,
+        #[serde(default)]
         filename: String,
         #[serde(default)]
         path: String,
         #[serde(default)]
         isdir: i32,
+        #[serde(default)]
+        size: Option<u64>,
+        #[serde(default)]
+        dlink: String,
     }
 
     let result: FileMetasResponse = serde_json::from_str(&text)
         .map_err(|e| anyhow!("解析 filemetas 失败: {}, body={}", e, text))?;
-
     if result.errno != 0 {
-        return Err(anyhow!("filemetas 返回错误 errno={}", result.errno));
+        return Err(map_baidu_errno(result.errno, "filemetas").into());
     }
 
-    let item = result
+    Ok(result
         .list
-        .first()
-        .ok_or_else(|| anyhow!("filemetas 返回空列表"))?;
-
-    Ok(FsidMeta {
-        fsid,
-        filename: item.filename.clone(),
-        path: item.path.clone(),
-        is_dir: item.isdir == 1,
-    })
+        .into_iter()
+        .map(|item| FsidMeta {
+            fsid: item.fs_id.or(item.fsid).unwrap_or_default(),
+            filename: item.filename,
+            path: item.path,
+            is_dir: item.isdir == 1,
+            size: item.size,
+            dlink: if item.dlink.is_empty() {
+                None
+            } else {
+                Some(item.dlink)
+            },
+        })
+        .collect())
 }
 
-/// 批量获取下载链接 - OpenList 方案
 pub async fn get_download_links(state: &AppState, fsids: &[u64]) -> Result<Vec<(String, String)>> {
-    if fsids.is_empty() {
-        return Err(anyhow!("文件 fsids 列表不能为空"));
+    let mut out = Vec::new();
+    for &fsid in fsids {
+        out.push(get_download_link_by_fsid(state, fsid).await?);
     }
-
-    info!(
-        "📥 使用 OpenAPI 方式获取下载链接..., 共 {} 个文件",
-        fsids.len()
-    );
-
-    let access_token = get_or_refresh_access_token(state).await?;
-
-    let mut all_links = Vec::new();
-
-    for (i, &fsid) in fsids.iter().enumerate() {
-        info!("🔍 处理第 {}/{} 个 fsid: {}", i + 1, fsids.len(), fsid);
-
-        match get_download_link_by_fsid_internal(state, fsid, &access_token).await {
-            Ok((filename, url)) => {
-                info!("✅ 获取成功: {}", filename);
-                all_links.push((filename, url));
-            }
-            Err(e) => {
-                warn!("⚠️  fsid {} 获取失败: {}", fsid, e);
-            }
-        }
-
-        if i < fsids.len() - 1 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        }
-    }
-
-    if all_links.is_empty() {
-        return Err(anyhow!("所有文件都获取失败"));
-    }
-
-    info!("✅ 成功获取 {} 个下载链接", all_links.len());
-    Ok(all_links)
+    Ok(out)
 }
 
-/// 获取单个文件的下载链接（内部使用）
-pub async fn get_download_link_by_fsid_internal(
+pub async fn get_download_link_by_fsid(state: &AppState, fsid: u64) -> Result<(String, String)> {
+    let access_token = get_or_refresh_access_token(state).await?;
+    match get_download_link_by_fsid_internal(state, fsid, &access_token).await {
+        Ok(link) => Ok(link),
+        Err(error) if is_access_token_invalid(&error) => {
+            let refreshed = refresh_access_token(state)
+                .await
+                .map_err(|e| anyhow!("access_token 无效且刷新失败: {}", e))?;
+            get_download_link_by_fsid_internal(state, fsid, &refreshed).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) async fn get_download_link_by_fsid_internal(
     state: &AppState,
     fsid: u64,
     access_token: &str,
 ) -> Result<(String, String)> {
-    let url = format!(
-        "https://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas&fsids=[{}]&dlink=1&access_token={}",
+    let target = get_download_target(state, fsid, access_token).await?;
+    let final_url = resolve_dlink_redirect(state, &target.dlink, access_token).await?;
+    Ok((target.filename, final_url))
+}
+
+pub async fn get_download_target(
+    state: &AppState,
+    fsid: u64,
+    access_token: &str,
+) -> Result<DownloadTarget> {
+    let meta = get_fsid_meta(state, fsid, access_token).await?;
+    if meta.is_dir {
+        return Err(anyhow!("fsid={} 是目录，不能直接获取文件 dlink", fsid));
+    }
+    let dlink = meta
+        .dlink
+        .ok_or_else(|| anyhow!("filemetas 未返回 dlink: fsid={}", fsid))?;
+    Ok(DownloadTarget {
         fsid,
-        urlencoding::encode(access_token)
-    );
+        filename: meta.filename,
+        dlink,
+    })
+}
 
-    debug!("🔍 查询文件元信息 fsid={}", fsid);
-
+pub async fn resolve_dlink_redirect(
+    state: &AppState,
+    dlink: &str,
+    access_token: &str,
+) -> Result<String> {
+    let url = append_access_token(dlink, access_token);
     let resp = state
-        .client
+        .no_redirect_client
         .get(&url)
-        .header("User-Agent", "pan.baidu.com")
+        .header("User-Agent", Config::dlink_ua())
         .send()
         .await?;
 
     let status = resp.status();
-    let text = resp.text().await?;
-
-    debug!(
-        "filemetas 响应 status={}, body={}",
-        status,
-        &text[..text.len().min(300)]
-    );
-
-    #[derive(Deserialize)]
-    struct FileMetasResponse {
-        errno: i32,
-        #[serde(default)]
-        list: Vec<FileMetaItem>,
-    }
-
-    #[derive(Deserialize)]
-    struct FileMetaItem {
-        #[serde(default)]
-        dlink: String,
-        #[serde(default)]
-        filename: String,
-        #[serde(default)]
-        path: String,
-        #[serde(default)]
-        isdir: i32,
-    }
-
-    let result: FileMetasResponse = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("解析 filemetas 失败: {}, body={}", e, text))?;
-
-    if result.errno != 0 {
-        return Err(anyhow!("filemetas 返回错误 errno={}", result.errno));
-    }
-
-    let item = result
-        .list
-        .first()
-        .ok_or_else(|| anyhow!("filemetas 返回空列表"))?;
-
-    if item.isdir == 1 {
-        warn!("⚠️  fsid={} 是文件夹: {}", fsid, item.filename);
-        return Err(anyhow!("FOLDER:{}:{}:{}", fsid, item.path, item.filename));
-    }
-
-    if item.dlink.is_empty() {
-        return Err(anyhow!("文件 dlink 为空: {}", item.filename));
-    }
-
-    let full_url = format!(
-        "{}?access_token={}",
-        item.dlink,
-        urlencoding::encode(access_token)
-    );
-    debug!("📥 302 跳转获取最终下载链接...");
-
-    let res = state
-        .client
-        .head(&full_url)
-        .header("User-Agent", "pan.baidu.com")
-        .send()
-        .await?;
-
-    let final_url = if res.status() == 302 {
-        res.headers()
-            .get("location")
+    if status.is_redirection() {
+        return resp
+            .headers()
+            .get(reqwest::header::LOCATION)
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| anyhow!("302 重定向缺少 Location 头"))?
-            .to_string()
-    } else {
-        full_url
-    };
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("百度 dlink 302 响应缺少 Location"));
+    }
 
-    Ok((item.filename.clone(), final_url))
+    let content_type_is_json = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().contains("json"));
+    let small_response = resp.content_length().is_some_and(|len| len <= 4096);
+    if status.is_success() && !content_type_is_json && !small_response {
+        return Ok(url);
+    }
+
+    let text = resp.text().await.unwrap_or_default();
+    if let Some(error) = baidu_error_from_body(&text, "dlink_redirect") {
+        return Err(error.into());
+    }
+    if status.is_success() {
+        return Ok(url);
+    }
+
+    Err(anyhow!(
+        "解析 dlink 跳转失败: HTTP {}, body={}",
+        status,
+        text
+    ))
 }
 
-#[derive(Debug, Clone)]
-struct DirEntry {
-    fsid: u64,
-    name: String,
-    path: String,
-    is_dir: bool,
+fn is_access_token_invalid(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<crate::AppError>()
+        .is_some_and(|err| err.code() == "baidu_access_token_invalid")
 }
 
-async fn list_dir_entries(state: &AppState, dir_path: &str) -> Result<Vec<DirEntry>> {
+fn baidu_error_from_body(body: &str, context: &'static str) -> Option<crate::AppError> {
+    #[derive(Deserialize)]
+    struct ErrnoResponse {
+        #[serde(default)]
+        errno: Option<i32>,
+        #[serde(default)]
+        error_code: Option<i32>,
+    }
+
+    let result = serde_json::from_str::<ErrnoResponse>(body).ok()?;
+    let errno = result.errno.or(result.error_code)?;
+    (errno != 0).then(|| map_baidu_errno(errno, context))
+}
+
+fn append_access_token(dlink: &str, access_token: &str) -> String {
+    let sep = if dlink.contains('?') { '&' } else { '?' };
+    format!(
+        "{}{}access_token={}",
+        dlink,
+        sep,
+        urlencoding::encode(access_token)
+    )
+}
+
+pub async fn list_directory_entries(state: &AppState, path: &str) -> Result<Vec<PanEntry>> {
+    const PAGE_SIZE: usize = 1000;
+    let mut page = 1;
+    let mut out = Vec::new();
+
+    loop {
+        let entries = list_directory_entries_page(state, path, page, PAGE_SIZE).await?;
+        let count = entries.len();
+        out.extend(entries);
+        if count < PAGE_SIZE {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok(out)
+}
+
+async fn list_directory_entries_page(
+    state: &AppState,
+    path: &str,
+    page: usize,
+    page_size: usize,
+) -> Result<Vec<PanEntry>> {
     let url = format!(
-        "https://pan.baidu.com/api/list?dir={}&num=1000&order=time&desc=0",
-        urlencoding::encode(dir_path)
+        "https://pan.baidu.com/api/list?dir={}&page={}&num={}&order=time&desc=1",
+        urlencoding::encode(path),
+        page,
+        page_size
     );
-
     let resp = state
         .client
         .get(&url)
         .header("User-Agent", Config::browser_ua())
         .send()
         .await?;
-
     let text = resp.text().await?;
 
     #[derive(Deserialize)]
@@ -262,392 +333,174 @@ async fn list_dir_entries(state: &AppState, dir_path: &str) -> Result<Vec<DirEnt
         path: String,
         #[serde(default)]
         isdir: i32,
+        #[serde(default)]
+        size: Option<u64>,
     }
 
     let result: ListResult = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("解析目录列表失败, body={}, error={}", text, e))?;
-
+        .map_err(|e| anyhow!("解析目录列表失败: {}, body={}", e, text))?;
     if result.errno != 0 {
-        return Err(anyhow!("获取目录列表失败 errno={}", result.errno));
+        return Err(map_baidu_errno(result.errno, "list_directory").into());
     }
 
     Ok(result
         .list
         .into_iter()
         .map(|f| {
-            let name = f.server_filename;
-            let path = if f.path.is_empty() {
-                // 兜底：部分字段缺失时，用 dir_path + name 拼一个
-                format!("{}/{}", dir_path.trim_end_matches('/'), &name)
+            let full_path = if f.path.is_empty() {
+                format!("{}/{}", path.trim_end_matches('/'), f.server_filename)
             } else {
                 f.path
             };
-
-            DirEntry {
+            PanEntry {
                 fsid: f.fsid,
-                name,
-                path,
+                filename: f.server_filename.clone(),
+                relative_path: f.server_filename,
+                path: full_path,
                 is_dir: f.isdir == 1,
+                size: f.size,
             }
         })
         .collect())
 }
 
-async fn collect_files_recursive(state: &AppState, base_dir: &str) -> Result<Vec<(String, u64)>> {
-    let base_dir = base_dir.trim_end_matches('/').to_string();
-    let mut stack = vec![base_dir.clone()];
-    let mut out: Vec<(String, u64)> = Vec::new();
+pub async fn list_directory_entries_recursive(
+    state: &AppState,
+    root_path: &str,
+) -> Result<Vec<PanEntry>> {
+    let root_path = root_path.trim_end_matches('/').to_string();
+    let mut stack = vec![root_path.clone()];
+    let mut out = Vec::new();
 
     while let Some(dir) = stack.pop() {
-        let entries = list_dir_entries(state, &dir).await?;
-        for e in entries {
-            if e.is_dir {
-                stack.push(e.path);
-                continue;
-            }
-
-            let rel = e
+        for mut entry in list_directory_entries(state, &dir).await? {
+            let rel = entry
                 .path
-                .strip_prefix(&base_dir)
-                .unwrap_or(&e.path)
+                .strip_prefix(&root_path)
+                .unwrap_or(&entry.path)
                 .trim_start_matches('/')
                 .to_string();
+            entry.relative_path = if rel.is_empty() {
+                entry.filename.clone()
+            } else {
+                rel
+            };
 
-            let name = if rel.is_empty() { e.name } else { rel };
-            out.push((name, e.fsid));
+            if entry.is_dir {
+                stack.push(entry.path.clone());
+            } else {
+                out.push(entry);
+            }
         }
-    }
-
-    if out.is_empty() {
-        return Err(anyhow!("目录为空或没有可下载文件"));
     }
 
     Ok(out)
 }
 
-/// 将输入的 fsid（文件/文件夹）展开为具体文件列表：返回 (zip 内路径, 文件 fsid)
-///
-/// - 文件：返回 (filename, fsid)
-/// - 文件夹：递归展开目录，并返回 (folder_name/relative/path, file_fsid)
+pub async fn list_directory_fsids(state: &AppState, path: &str) -> Result<Vec<u64>> {
+    Ok(list_directory_entries(state, path)
+        .await?
+        .into_iter()
+        .map(|entry| entry.fsid)
+        .collect())
+}
+
+pub async fn list_directory_files(state: &AppState, path: &str) -> Result<Vec<(u64, String)>> {
+    Ok(list_directory_entries(state, path)
+        .await?
+        .into_iter()
+        .map(|entry| (entry.fsid, entry.filename))
+        .collect())
+}
+
 pub async fn expand_fsids_to_file_jobs(
     state: &AppState,
     fsids: &[u64],
     access_token: &str,
 ) -> Result<Vec<(String, u64)>> {
-    if fsids.is_empty() {
-        return Err(anyhow!("fsids 不能为空"));
-    }
-
-    let mut file_jobs: Vec<(String, u64)> = Vec::new();
-
+    let mut jobs = Vec::new();
     for &fsid in fsids {
         let meta = get_fsid_meta(state, fsid, access_token).await?;
         if meta.is_dir {
-            info!("📂 展开目录: {} ({})", meta.filename, meta.path);
-            let files = collect_files_recursive(state, &meta.path).await?;
-            for (rel, child_fsid) in files {
-                let zip_name = if rel.is_empty() {
-                    meta.filename.clone()
-                } else {
-                    format!("{}/{}", meta.filename, rel)
-                };
-                file_jobs.push((zip_name, child_fsid));
+            for entry in list_directory_entries_recursive(state, &meta.path).await? {
+                jobs.push((
+                    format!("{}/{}", meta.filename, entry.relative_path),
+                    entry.fsid,
+                ));
             }
         } else {
-            file_jobs.push((meta.filename, fsid));
+            jobs.push((meta.filename, fsid));
         }
     }
-
-    if file_jobs.is_empty() {
-        return Err(anyhow!("没有可打包的文件"));
-    }
-
-    Ok(file_jobs)
+    Ok(jobs)
 }
 
-/// 将一个目录（通过目录 path）递归打包为 ZIP
 pub async fn zip_directory_by_path_to_bytes(
-    state: &AppState,
-    dir_path: &str,
-    access_token: &str,
+    _state: &AppState,
+    _dir_path: &str,
+    _access_token: &str,
 ) -> Result<Vec<u8>> {
-    info!("🗜️  开始递归打包目录为 ZIP: {}", dir_path);
-
-    let files = collect_files_recursive(state, dir_path).await?;
-    let total = files.len();
-    info!("📄 目录内共 {} 个文件需要打包", total);
-
-    // 拉取每个文件内容
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(total);
-
-    for (i, (zip_name, fsid)) in files.into_iter().enumerate() {
-        info!("📥 下载第 {}/{} 个文件 fsid={}", i + 1, total, fsid);
-
-        let (_filename, url) =
-            get_download_link_by_fsid_internal(state, fsid, access_token).await?;
-
-        let resp = state
-            .client
-            .get(&url)
-            .header("User-Agent", "pan.baidu.com")
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            return Err(anyhow!(
-                "下载文件失败 fsid={}, status={}",
-                fsid,
-                resp.status()
-            ));
-        }
-
-        let bytes = resp.bytes().await?.to_vec();
-        entries.push((zip_name, bytes));
-    }
-
-    let zip_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        let cursor = std::io::Cursor::new(Vec::<u8>::new());
-        let mut zip = ZipWriter::new(cursor);
-
-        let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
-        for (name, data) in entries {
-            let name = name.replace('\\', "/");
-            zip.start_file(&name, options)?;
-            zip.write_all(&data[..])?;
-        }
-        let cursor = zip.finish()?;
-        Ok(cursor.into_inner())
-    })
-    .await??;
-
-    info!("✅ 目录 ZIP 打包完成 bytes={}", zip_bytes.len());
-    Ok(zip_bytes)
+    Err(anyhow!("v1 暂不支持服务器端 ZIP 打包"))
 }
 
-/// 将多个 fsid 打包成 ZIP（用于文件夹）
 pub async fn zip_fsids_to_bytes(
-    state: &AppState,
-    fsids: &[u64],
-    access_token: &str,
+    _state: &AppState,
+    _fsids: &[u64],
+    _access_token: &str,
 ) -> Result<Vec<u8>> {
-    if fsids.is_empty() {
-        return Err(anyhow!("文件 fsids 列表不能为空"));
-    }
-
-    info!(
-        "📦 开始 ZIP 打包，共 {} 个输入项（文件/文件夹）",
-        fsids.len()
-    );
-
-    let file_jobs = expand_fsids_to_file_jobs(state, fsids, access_token).await?;
-    info!("📄 需要打包的文件总数: {}", file_jobs.len());
-
-    // 下载所有文件内容
-    let total = file_jobs.len();
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(total);
-
-    for (i, (zip_name, fsid)) in file_jobs.into_iter().enumerate() {
-        info!("📥 下载第 {}/{} 个文件 fsid={}", i + 1, total, fsid);
-
-        let (_filename, url) =
-            get_download_link_by_fsid_internal(state, fsid, access_token).await?;
-
-        let resp = state
-            .client
-            .get(&url)
-            .header("User-Agent", "pan.baidu.com")
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            return Err(anyhow!(
-                "下载文件失败 fsid={}, status={}",
-                fsid,
-                resp.status()
-            ));
-        }
-
-        let bytes = resp.bytes().await?.to_vec();
-        entries.push((zip_name, bytes));
-    }
-
-    // 打包成 ZIP（在 Tokio runtime 中执行阻塞操作）
-    let zip_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        let cursor = std::io::Cursor::new(Vec::<u8>::new());
-        let mut zip = ZipWriter::new(cursor);
-
-        let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
-
-        for (filename, data) in entries {
-            let name = filename.replace("\\", "/");
-            zip.start_file(&name, options)?;
-            zip.write_all(&data[..])?;
-        }
-
-        let cursor = zip.finish()?;
-        Ok(cursor.into_inner())
-    })
-    .await??;
-
-    info!("✅ ZIP 打包完成 bytes={}", zip_bytes.len());
-    Ok(zip_bytes)
+    Err(anyhow!("v1 暂不支持服务器端 ZIP 打包"))
 }
 
-async fn get_or_refresh_access_token(state: &AppState) -> Result<String> {
-    let open_cfg = &state.config.baidu_open;
-
-    if !open_cfg.access_token.is_empty() {
-        return Ok(open_cfg.access_token.clone());
-    }
-
-    if !open_cfg.refresh_token.is_empty() {
-        info!("🔄 使用 accesstoken refreshtoken ...");
-        let token = crate::baidupcs::openapi::refresh_token(state).await?;
-        info!("✅ 获取 accesstoken 成功，长度={}", token.len());
-        return Ok(token);
-    }
-
-    Err(anyhow!("未配置 accesstoken 或 refreshtoken"))
-}
-
-pub async fn list_directory_fsids(state: &AppState, path: &str) -> Result<Vec<u64>> {
-    let url = format!(
-        "https://pan.baidu.com/api/list?dir={}&num=100&order=time&desc=1",
-        urlencoding::encode(path)
-    );
-
-    debug!("📂 列出目录: {}", path);
-
-    let resp = state
-        .client
-        .get(&url)
-        .header("User-Agent", Config::browser_ua())
-        .send()
-        .await?;
-
-    let text = resp.text().await?;
-
-    #[derive(Deserialize)]
-    struct ListResult {
-        errno: i32,
-        #[serde(default)]
-        list: Vec<FileInfo>,
-    }
-
-    #[derive(Deserialize)]
-    struct FileInfo {
-        #[serde(rename = "fs_id")]
-        fsid: u64,
-        #[serde(default)]
-        server_filename: String,
-    }
-
-    let result: ListResult = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("解析目录列表失败, body={}, error={}", text, e))?;
-
-    if result.errno != 0 {
-        return Err(anyhow!("获取目录列表失败 errno={}", result.errno));
-    }
-
-    info!("📂 目录文件数: {}", result.list.len());
-
-    for (i, file) in result.list.iter().take(5).enumerate() {
-        info!("  {}. {} (fsid={})", i + 1, file.server_filename, file.fsid);
-    }
-
-    Ok(result.list.into_iter().map(|f| f.fsid).collect())
-}
-
-/// 分享链接转直链（返回 fsid 和文件名列表）
-/// 分享链接转直链（返回 fsid 和文件名列表）
 pub async fn share_to_direct_link(
     state: &AppState,
     share_url: &str,
     pwd: &str,
 ) -> Result<Vec<(u64, String)>> {
-    use crate::baidupcs;
-
-    info!("🔗 处理分享链接: {}", share_url);
-
-    let surl = baidupcs::extract_surl(share_url).ok_or_else(|| anyhow!("无法提取 surl"))?;
-
-    let info = baidupcs::get_share_info(state, share_url, &surl, pwd).await?;
-    info!("📦 分享文件数: {}", info.fs_ids.len()); // ✅ 修复：fsids -> fs_ids
-
-    baidupcs::transfer_files(
+    let result = crate::direct_link::convert_share_to_signed_downloads(
         state,
-        &info.shareid,
-        &info.uk,
-        &info.fs_ids, // ✅ 修复
-        &info.bdstoken,
-        &surl,
+        crate::direct_link::ConvertShareCommand {
+            link: share_url.to_string(),
+            pwd: pwd.to_string(),
+            ttl_secs: 24 * 3600,
+        },
     )
-    .await?;
-
-    info!("⏳ 等待转存完成...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
-
-    info!("📂 查询转存目录...");
-    let files = list_directory_files(state, &state.config.baidu.save_path).await?;
-
-    if files.is_empty() {
-        return Err(anyhow!("转存目录为空"));
-    }
-
-    info!("✅ 找到 {} 个文件", files.len());
-
-    let target_count = info.fs_ids.len(); // ✅ 修复
-    let target_files: Vec<(u64, String)> = files.into_iter().take(target_count).collect();
-
-    info!("🎯 返回 {} 个 fsid", target_files.len());
-
-    Ok(target_files)
+    .await
+    .map_err(|e| anyhow!(e.to_string()))?;
+    Ok(result
+        .items
+        .into_iter()
+        .map(|item| (item.fsid, item.filename))
+        .collect())
 }
 
-pub async fn list_directory_files(state: &AppState, path: &str) -> Result<Vec<(u64, String)>> {
-    let url = format!(
-        "https://pan.baidu.com/api/list?dir={}&num=100&order=time&desc=1",
-        urlencoding::encode(path)
-    );
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    debug!("📂 列出目录: {}", path);
-
-    let resp = state
-        .client
-        .get(&url)
-        .header("User-Agent", Config::browser_ua())
-        .send()
-        .await?;
-
-    let text = resp.text().await?;
-
-    #[derive(Deserialize)]
-    struct ListResult {
-        errno: i32,
-        #[serde(default)]
-        list: Vec<FileInfo>,
+    #[test]
+    fn appends_access_token_with_existing_query() {
+        assert_eq!(
+            append_access_token("https://d.pcs.baidu.com/file/a?x=1", "tok en"),
+            "https://d.pcs.baidu.com/file/a?x=1&access_token=tok%20en"
+        );
     }
 
-    #[derive(Deserialize)]
-    struct FileInfo {
-        #[serde(rename = "fs_id")]
-        fsid: u64,
-        #[serde(default)]
-        server_filename: String,
+    #[test]
+    fn appends_access_token_without_query() {
+        assert_eq!(
+            append_access_token("https://d.pcs.baidu.com/file/a", "token"),
+            "https://d.pcs.baidu.com/file/a?access_token=token"
+        );
     }
 
-    let result: ListResult = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("解析目录列表失败, body={}, error={}", text, e))?;
+    #[test]
+    fn parses_baidu_errno_from_json_body() {
+        let err = baidu_error_from_body(r#"{"errno":31045}"#, "download").unwrap();
+        assert_eq!(err.code(), "baidu_access_token_invalid");
 
-    if result.errno != 0 {
-        return Err(anyhow!("获取目录列表失败 errno={}", result.errno));
+        let err = baidu_error_from_body(r#"{"error_code":31326}"#, "download").unwrap();
+        assert_eq!(err.code(), "baidu_hotlink_protection");
+
+        assert!(baidu_error_from_body(r#"{"errno":0}"#, "download").is_none());
     }
-
-    info!("📂 目录文件数: {}", result.list.len());
-
-    Ok(result
-        .list
-        .into_iter()
-        .map(|f| (f.fsid, f.server_filename))
-        .collect())
 }
