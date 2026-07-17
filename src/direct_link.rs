@@ -30,32 +30,37 @@ pub async fn convert_share_to_signed_downloads(
         ));
     }
 
-    let surl = baidupcs::extract_surl(&command.link)
+    let share_input = baidupcs::parse_share_input(&command.link, &command.pwd)
         .ok_or_else(|| AppError::bad_request("invalid_share_link", "无法从分享链接中提取 surl"))?;
-    let share = baidupcs::get_share_info(state, &command.link, &surl, &command.pwd)
-        .await
-        .map_err(classify_share_error)?;
+    let share = baidupcs::get_share_info(
+        state,
+        &share_input.original_url,
+        &share_input.surl,
+        &share_input.password,
+    )
+    .await
+    .map_err(classify_share_error)?;
 
     let transfer_job = build_transfer_job(&state.config.baidu.save_path);
     let relay_root = relay_root(&state.config.baidu.save_path);
-    baidupcs::transfer::create_remote_dir(state, &relay_root, &share.bdstoken)
+    baidupcs::transfer::create_remote_dir(state, &relay_root)
         .await
         .map_err(classify_transfer_error)?;
-    baidupcs::transfer::create_remote_dir(state, &transfer_job.target_dir, &share.bdstoken)
+    baidupcs::transfer::create_remote_dir(state, &transfer_job.target_dir)
         .await
         .map_err(classify_transfer_error)?;
 
-    baidupcs::transfer::transfer_files_to_path(
-        state,
-        &share.shareid,
-        &share.uk,
-        &share.fs_ids,
-        &share.bdstoken,
-        &surl,
-        &transfer_job.target_dir,
-    )
-    .await
-    .map_err(classify_transfer_error)?;
+    let transfer = baidupcs::transfer::TransferRequest {
+        shareid: &share.shareid,
+        uk: &share.uk,
+        fs_ids: &share.fs_ids,
+        bdstoken: &share.bdstoken,
+        sekey: &share.sekey,
+        surl: &share_input.surl,
+    };
+    baidupcs::transfer::transfer_files_to_path(state, transfer, &transfer_job.target_dir)
+        .await
+        .map_err(classify_transfer_error)?;
 
     let files = wait_for_transferred_files(state, &transfer_job.target_dir).await?;
     let items = sign_entries(&state.config.web.sign_secret, files, command.ttl_secs)?;

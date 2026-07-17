@@ -40,24 +40,29 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState::new(config)?);
     tracing::info!("✅ HTTP Client 初始化完成");
 
-    // 提取 surl
-    let surl = baidupcs::extract_surl(&share_url)
+    let share_input = baidupcs::parse_share_input(&share_url, &pwd)
         .ok_or_else(|| anyhow!("无法从链接中提取 surl: {}", share_url))?;
 
     // 1) 获取分享信息
-    let info = baidupcs::get_share_info(state.as_ref(), &share_url, &surl, &pwd).await?;
+    let info = baidupcs::get_share_info(
+        state.as_ref(),
+        &share_input.original_url,
+        &share_input.surl,
+        &share_input.password,
+    )
+    .await?;
     tracing::info!("📦 获取到 {} 个文件，开始转存...", info.fs_ids.len());
 
     // 2) 转存
-    baidupcs::transfer_files(
-        state.as_ref(),
-        &info.shareid,
-        &info.uk,
-        &info.fs_ids,
-        &info.bdstoken,
-        &surl,
-    )
-    .await?;
+    let transfer = baidupcs::TransferRequest {
+        shareid: &info.shareid,
+        uk: &info.uk,
+        fs_ids: &info.fs_ids,
+        bdstoken: &info.bdstoken,
+        sekey: &info.sekey,
+        surl: &share_input.surl,
+    };
+    baidupcs::transfer_files(state.as_ref(), transfer).await?;
 
     tracing::info!(
         "✅ 转存请求已完成，保存路径: {}",

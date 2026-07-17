@@ -1,320 +1,665 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>百度网盘直链转换</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:,">
+    <title>BaiduPCS Relay</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            color-scheme: light;
+            --canvas: #f3f5f7;
+            --surface: #ffffff;
+            --text: #18212b;
+            --muted: #657180;
+            --line: #d8dee6;
+            --line-strong: #b8c1cc;
+            --accent: #1769aa;
+            --accent-hover: #10568d;
+            --success: #247548;
+            --success-bg: #edf8f1;
+            --warning: #8b5b0a;
+            --warning-bg: #fff7e6;
+            --danger: #a43c3c;
+            --danger-bg: #fff0f0;
+            --focus: #8ec5f2;
+        }
+
+        * { box-sizing: border-box; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            min-width: 320px;
             min-height: 100vh;
+            background: var(--canvas);
+            color: var(--text);
+            font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            font-size: 14px;
+            letter-spacing: 0;
+        }
+
+        button, input, textarea { font: inherit; letter-spacing: 0; }
+
+        .topbar {
+            height: 58px;
+            border-bottom: 1px solid var(--line);
+            background: var(--surface);
+        }
+
+        .topbar-inner {
+            width: min(1120px, calc(100% - 32px));
+            height: 100%;
+            margin: 0 auto;
             display: flex;
             align-items: center;
-            justify-content: center;
-            padding: 20px;
+            justify-content: space-between;
+            gap: 20px;
         }
-        .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            max-width: 800px;
-            width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        }
-        h1 {
-            color: #667eea;
-            margin-bottom: 10px;
-            text-align: center;
-            font-size: 2em;
-        }
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            color: #333;
-            font-weight: 500;
-        }
-        input[type="text"], input[type="password"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 14px;
-            transition: border 0.3s;
-        }
-        input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        button {
-            width: 100%;
-            padding: 14px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s;
-        }
-        button:hover {
-            transform: translateY(-2px);
-        }
-        button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        .loading {
-            display: none;
-            text-align: center;
-            margin: 20px 0;
-            color: #667eea;
-            font-size: 16px;
-        }
-        .loading.show { display: block; }
-        .result {
-            margin-top: 20px;
-            display: none;
-        }
-        .result.show { display: block; }
-        .success {
-            background: #d4edda;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #f5c6cb;
-        }
-        .file-item {
-            background: #f8f9fa;
-            padding: 15px;
-            margin: 10px 0;
+
+        .brand { font-size: 17px; font-weight: 700; }
+        .brand-note { color: var(--muted); font-size: 12px; }
+
+        main {
+            width: min(1120px, calc(100% - 32px));
+            margin: 24px auto 48px;
+            background: var(--surface);
+            border: 1px solid var(--line);
             border-radius: 6px;
         }
-        .file-name {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 8px;
-            font-size: 15px;
+
+        .access-bar {
+            display: grid;
+            grid-template-columns: minmax(140px, 1fr) minmax(260px, 2fr) auto;
+            align-items: end;
+            gap: 14px;
+            padding: 18px 22px;
+            border-bottom: 1px solid var(--line);
+            background: #fafbfc;
         }
-        .file-link {
-            background: white;
-            padding: 10px;
-            border-radius: 4px;
-            word-break: break-all;
-            font-size: 11px;
-            font-family: monospace;
-            border: 1px solid #e0e0e0;
-            margin-bottom: 12px;
-            max-height: 80px;
-            overflow-y: auto;
+
+        .access-heading { align-self: center; }
+        .access-heading strong { display: block; margin-bottom: 3px; }
+        .access-heading span { color: var(--muted); font-size: 12px; }
+
+        .work-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         }
-        .btn-group {
+
+        .work-section { padding: 24px; min-width: 0; }
+        .work-section + .work-section { border-left: 1px solid var(--line); }
+
+        .section-header {
             display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 20px;
         }
-        .copy-btn {
-            flex: 1;
-            min-width: 120px;
-            padding: 10px 16px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-        .copy-btn:hover {
-            background: #5568d3;
-            transform: translateY(-1px);
-        }
-        .download-btn {
-            background: #28a745;
-        }
-        .download-btn:hover {
-            background: #218838;
-        }
-        .download-tip {
-            margin-top: 10px;
-            padding: 10px;
-            background: #fff3cd;
-            border-radius: 4px;
-            font-size: 12px;
-            color: #856404;
-        }
-        .progress-bar {
-            display: none;
+
+        h1, h2, h3 { margin: 0; letter-spacing: 0; }
+        h1 { font-size: 18px; }
+        h2 { font-size: 16px; }
+        h3 { font-size: 14px; }
+        .section-copy { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+        label { display: block; margin-bottom: 6px; color: #34404d; font-weight: 600; font-size: 12px; }
+        .field { margin-bottom: 16px; }
+
+        input, textarea {
             width: 100%;
-            height: 20px;
-            background: #e0e0e0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin-top: 10px;
+            border: 1px solid var(--line-strong);
+            border-radius: 4px;
+            background: var(--surface);
+            color: var(--text);
         }
-        .progress-bar.show {
-            display: block;
-        }
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.3s;
-            display: flex;
+
+        input { height: 38px; padding: 0 11px; }
+        textarea { min-height: 154px; padding: 10px 11px; resize: vertical; font-family: Consolas, monospace; font-size: 12px; line-height: 1.55; }
+        input:focus, textarea:focus { outline: 3px solid var(--focus); outline-offset: 0; border-color: var(--accent); }
+
+        button, .button-link {
+            min-height: 36px;
+            padding: 0 15px;
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-size: 11px;
-            font-weight: bold;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 650;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        button:focus-visible, .button-link:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+        .primary { background: var(--accent); color: #fff; }
+        .primary:hover:not(:disabled) { background: var(--accent-hover); }
+        .secondary { background: #fff; border-color: var(--line-strong); color: #2d3946; }
+        .secondary:hover:not(:disabled) { background: #f4f6f8; }
+        .compact { min-height: 32px; padding: 0 11px; font-size: 12px; }
+
+        .button-row { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            min-height: 26px;
+            padding: 4px 9px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            color: var(--muted);
+            background: #f7f8fa;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status.success { color: var(--success); background: var(--success-bg); border-color: #b9dec7; }
+        .status.warning { color: var(--warning); background: var(--warning-bg); border-color: #edd49c; }
+        .status.error { color: var(--danger); background: var(--danger-bg); border-color: #edbcbc; }
+
+        .metadata { margin: 0 0 20px; border-top: 1px solid var(--line); }
+        .metadata-row { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+        .metadata dt { color: var(--muted); }
+        .metadata dd { margin: 0; overflow-wrap: anywhere; }
+
+        .credential-area { display: none; margin-top: 16px; }
+        .credential-area.show { display: block; }
+        .credential-note { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+        .oauth-code-area { display: none; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+        .oauth-code-area.show { display: block; }
+        .oauth-code-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; }
+        .oauth-code-grid .field { margin: 0; }
+
+        .notice { display: none; margin-top: 16px; padding: 10px 12px; border-left: 3px solid var(--line-strong); background: #f7f8fa; line-height: 1.55; }
+        .notice.show { display: block; }
+        .notice.success { border-color: var(--success); background: var(--success-bg); color: #185c36; }
+        .notice.error { border-color: var(--danger); background: var(--danger-bg); color: #812d2d; }
+
+        .results {
+            display: none;
+            padding: 24px;
+            border-top: 1px solid var(--line);
+        }
+
+        .results.show { display: block; }
+        .results-list { margin-top: 14px; border-top: 1px solid var(--line); }
+        .result-row { padding: 14px 0; border-bottom: 1px solid var(--line); }
+        .result-name { margin-bottom: 8px; font-weight: 650; overflow-wrap: anywhere; }
+        .result-url { margin-bottom: 10px; padding: 9px 10px; background: #f6f8fa; border: 1px solid var(--line); border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+
+        .busy { opacity: .72; pointer-events: none; }
+
+        @media (max-width: 780px) {
+            .topbar-inner, main { width: min(100% - 20px, 1120px); }
+            main { margin-top: 12px; }
+            input { height: 44px; }
+            button, .button-link { min-height: 44px; }
+            .access-bar { grid-template-columns: 1fr; align-items: stretch; }
+            .work-grid { grid-template-columns: 1fr; }
+            .work-section + .work-section { border-left: 0; border-top: 1px solid var(--line); }
+            .work-section, .results { padding: 20px; }
+            .section-header { align-items: center; }
+            .metadata-row { grid-template-columns: 96px minmax(0, 1fr); }
+            .oauth-code-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 440px) {
+            .topbar-inner { align-items: center; }
+            .brand-note { display: none; }
+            .button-row button, .button-row .button-link { flex: 1 1 100%; }
+            .metadata-row { grid-template-columns: 1fr; gap: 4px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🔗 百度网盘直链转换</h1>
-        <p class="subtitle">分享链接 → 自动转存 → 下载直链</p>
-        
-        <form id="convertForm">
-            <div class="form-group">
-                <label>访问密码</label>
-                <input type="password" name="token" placeholder="请输入访问密码" required>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">BaiduPCS Relay</div>
+            <div class="brand-note">本地直链服务</div>
+        </div>
+    </header>
+
+    <main>
+        <form id="accessForm" class="access-bar" aria-labelledby="accessTitle">
+            <div class="access-heading">
+                <strong id="accessTitle">服务鉴权</strong>
+                <span>WEB_ACCESS_TOKEN</span>
             </div>
-            <div class="form-group">
-                <label>分享链接</label>
-                <input type="text" name="link" placeholder="https://pan.baidu.com/s/xxxxx" required>
+            <div>
+                <label for="serviceToken">服务访问令牌</label>
+                <input type="text" name="username" value="local-relay" autocomplete="username" hidden>
+                <input id="serviceToken" type="password" autocomplete="current-password" placeholder="输入本服务的访问令牌">
             </div>
-            <div class="form-group">
-                <label>提取码（可选）</label>
-                <input type="text" name="pwd" placeholder="若有提取码请输入">
-            </div>
-            <button type="submit">开始转换</button>
+            <button id="refreshStatus" class="secondary" type="submit">刷新状态</button>
         </form>
 
-        <div class="loading">⏳ 正在转换，预计需要 15-30 秒...</div>
+        <div class="work-grid">
+            <section class="work-section" aria-labelledby="oauthTitle">
+                <div class="section-header">
+                    <div>
+                        <h1 id="oauthTitle">百度开放平台授权</h1>
+                        <p class="section-copy">授权码模式 · scope: netdisk</p>
+                    </div>
+                    <span id="oauthStatus" class="status">未检查</span>
+                </div>
 
-        <div id="result" class="result"></div>
-    </div>
+                <dl class="metadata">
+                    <div class="metadata-row">
+                        <dt>Client ID</dt>
+                        <dd id="clientId">-</dd>
+                    </div>
+                    <div class="metadata-row">
+                        <dt>授权方式</dt>
+                        <dd id="oauthModeLabel">-</dd>
+                    </div>
+                    <div class="metadata-row">
+                        <dt>Redirect URI</dt>
+                        <dd id="redirectUri">-</dd>
+                    </div>
+                    <div class="metadata-row">
+                        <dt>Token 到期</dt>
+                        <dd id="expiresAt">-</dd>
+                    </div>
+                </dl>
+
+                <div class="button-row">
+                    <button id="startOauth" class="primary" type="button" disabled>授权百度网盘</button>
+                    <button id="showCredentials" class="secondary" type="button" disabled>查看凭据</button>
+                </div>
+
+                <form id="oobForm" class="oauth-code-area">
+                    <div class="oauth-code-grid">
+                        <div class="field">
+                            <label for="authorizationCode">百度授权码</label>
+                            <input id="authorizationCode" type="text" autocomplete="one-time-code" spellcheck="false" required>
+                        </div>
+                        <button id="exchangeCode" class="primary" type="submit">提交授权码</button>
+                    </div>
+                    <p class="credential-note">授权码和本次授权请求均为一次性，10 分钟内有效。</p>
+                </form>
+
+                <div id="credentialArea" class="credential-area">
+                    <label for="credentials">环境变量</label>
+                    <textarea id="credentials" readonly spellcheck="false"></textarea>
+                    <div class="button-row">
+                        <button id="copyCredentials" class="secondary compact" type="button">复制</button>
+                    </div>
+                    <p class="credential-note">Client Secret 仅保存在 Rust 服务端，不会返回浏览器。</p>
+                </div>
+
+                <div id="oauthNotice" class="notice" role="status" aria-live="polite"></div>
+            </section>
+
+            <section class="work-section" aria-labelledby="convertTitle">
+                <div class="section-header">
+                    <div>
+                        <h2 id="convertTitle">分享链接转换</h2>
+                        <p class="section-copy">转存并生成本地签名下载链接</p>
+                    </div>
+                </div>
+
+                <form id="convertForm">
+                    <div class="field">
+                        <label for="shareLink">分享链接</label>
+                        <input id="shareLink" name="link" type="url" placeholder="https://pan.baidu.com/s/..." required>
+                    </div>
+                    <div class="field">
+                        <label for="sharePassword">提取码</label>
+                        <input id="sharePassword" name="pwd" type="text" autocomplete="off" maxlength="8" placeholder="可选">
+                    </div>
+                    <div class="button-row">
+                        <button id="convertButton" class="primary" type="submit">开始转换</button>
+                    </div>
+                </form>
+
+                <div id="convertNotice" class="notice" role="status" aria-live="polite"></div>
+            </section>
+        </div>
+
+        <section id="results" class="results" aria-labelledby="resultsTitle">
+            <h2 id="resultsTitle">下载链接</h2>
+            <div id="resultsList" class="results-list"></div>
+        </section>
+    </main>
 
     <script>
-        document.getElementById('convertForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const form = e.target;
-            const loading = document.querySelector('.loading');
-            const result = document.getElementById('result');
-            const btn = form.querySelector('button');
-            
-            const data = {
-                token: form.token.value,
-                link: form.link.value.trim(),
-                pwd: form.pwd.value.trim()
-            };
-            
-            loading.classList.add('show');
-            result.classList.remove('show');
-            btn.disabled = true;
-            
+        const ui = {
+            accessForm: document.getElementById('accessForm'),
+            serviceToken: document.getElementById('serviceToken'),
+            refreshStatus: document.getElementById('refreshStatus'),
+            oauthStatus: document.getElementById('oauthStatus'),
+            clientId: document.getElementById('clientId'),
+            oauthModeLabel: document.getElementById('oauthModeLabel'),
+            redirectUri: document.getElementById('redirectUri'),
+            expiresAt: document.getElementById('expiresAt'),
+            startOauth: document.getElementById('startOauth'),
+            showCredentials: document.getElementById('showCredentials'),
+            oobForm: document.getElementById('oobForm'),
+            authorizationCode: document.getElementById('authorizationCode'),
+            exchangeCode: document.getElementById('exchangeCode'),
+            credentialArea: document.getElementById('credentialArea'),
+            credentials: document.getElementById('credentials'),
+            copyCredentials: document.getElementById('copyCredentials'),
+            oauthNotice: document.getElementById('oauthNotice'),
+            convertForm: document.getElementById('convertForm'),
+            shareLink: document.getElementById('shareLink'),
+            sharePassword: document.getElementById('sharePassword'),
+            convertButton: document.getElementById('convertButton'),
+            convertNotice: document.getElementById('convertNotice'),
+            results: document.getElementById('results'),
+            resultsList: document.getElementById('resultsList')
+        };
+
+        let oauthWindow = null;
+        let oauthPoll = null;
+        let oauthMode = 'callback';
+        let oauthFlowId = '';
+
+        function authHeaders(extra = {}) {
+            const token = ui.serviceToken.value.trim();
+            if (!token) throw new Error('请先输入服务访问令牌');
+            return { ...extra, Authorization: `Bearer ${token}` };
+        }
+
+        async function api(path, options = {}) {
+            const response = await fetch(path, {
+                ...options,
+                headers: authHeaders(options.headers || {})
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.success === false) {
+                throw new Error(body.error?.message || `请求失败 (${response.status})`);
+            }
+            return body;
+        }
+
+        function setNotice(element, message, kind = '') {
+            element.textContent = message;
+            element.className = `notice show ${kind}`.trim();
+        }
+
+        function clearNotice(element) {
+            element.textContent = '';
+            element.className = 'notice';
+        }
+
+        function formatExpiry(value) {
+            if (!value) return '-';
+            return new Date(value * 1000).toLocaleString('zh-CN', { hour12: false });
+        }
+
+        function hideOobExchange() {
+            oauthFlowId = '';
+            ui.authorizationCode.value = '';
+            ui.oobForm.classList.remove('show');
+        }
+
+        async function refreshOauthStatus({ quiet = false } = {}) {
+            const token = ui.serviceToken.value.trim();
+            if (!token) {
+                ui.oauthStatus.textContent = '等待鉴权';
+                ui.oauthStatus.className = 'status warning';
+                ui.startOauth.disabled = true;
+                ui.showCredentials.disabled = true;
+                hideOobExchange();
+                if (!quiet) setNotice(ui.oauthNotice, '请先输入服务访问令牌', 'error');
+                return null;
+            }
+
             try {
-                const response = await fetch('/api/convert', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                
-                const res = await response.json();
-                
-                if (res.success && res.items) {
-                    result.innerHTML = `
-                        <div class="success">
-                            <h3>✅ 成功获取 ${res.items.length} 个下载链接</h3>
-                            ${res.items.map((file, i) => `
-                                <div class="file-item">
-                                    <div class="file-name">📄 ${escapeHtml(file.filename)}</div>
-                                     <div class="file-link" id="link-${i}">${escapeHtml(window.location.origin + file.download_url)}</div>
-                                    <div class="btn-group">
-                                        <button class="copy-btn" onclick="copyLink(${i})">📋 复制链接</button>
-                                        <button class="copy-btn download-btn" onclick="directDownload(${i})">⬇️ 直接下载</button>
-                                    </div>
-                                    <div class="progress-bar" id="progress-${i}">
-                                        <div class="progress-fill" id="progress-fill-${i}">0%</div>
-                                    </div>
-                                    <div class="download-tip">
-                                        💡 提示：链接会先访问本服务的 /d/download，再 302 跳转到百度真实下载地址
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    `;
+                const status = await api('/api/oauth/status');
+                ui.clientId.textContent = status.client_id || '-';
+                oauthMode = status.mode || 'callback';
+                ui.oauthModeLabel.textContent = oauthMode === 'oob' ? 'OOB 手工授权码' : 'HTTP 自动回调';
+                ui.redirectUri.textContent = status.redirect_uri || '-';
+                ui.expiresAt.textContent = formatExpiry(status.expires_at);
+                ui.startOauth.disabled = !status.configured;
+                ui.showCredentials.disabled = !status.authorized;
+                if (oauthMode !== 'oob' || status.authorized) hideOobExchange();
+
+                if (status.authorized) {
+                    ui.oauthStatus.textContent = '已授权';
+                    ui.oauthStatus.className = 'status success';
+                    if (!quiet) setNotice(ui.oauthNotice, '百度 OAuth token 已加载到当前服务进程', 'success');
+                } else if (status.configured) {
+                    ui.oauthStatus.textContent = status.token_available ? '配置可用' : '等待授权';
+                    ui.oauthStatus.className = status.token_available ? 'status success' : 'status warning';
+                    if (!quiet) clearNotice(ui.oauthNotice);
                 } else {
-                    result.innerHTML = `
-                        <div class="error">
-                            <h3>❌ 转换失败</h3>
-                            <p>${escapeHtml((res.error && res.error.message) || '未知错误')}</p>
-                        </div>
-                    `;
+                    ui.oauthStatus.textContent = '配置不完整';
+                    ui.oauthStatus.className = 'status error';
+                    if (!quiet) setNotice(ui.oauthNotice, '服务端缺少 Client ID、Client Secret 或回调地址', 'error');
                 }
-                
-                result.classList.add('show');
+                return status;
             } catch (error) {
-                result.innerHTML = `
-                    <div class="error">
-                        <h3>❌ 网络错误</h3>
-                        <p>${escapeHtml(error.message)}</p>
-                    </div>
-                `;
-                result.classList.add('show');
+                ui.oauthStatus.textContent = '检查失败';
+                ui.oauthStatus.className = 'status error';
+                ui.startOauth.disabled = true;
+                ui.showCredentials.disabled = true;
+                hideOobExchange();
+                if (!quiet) setNotice(ui.oauthNotice, error.message, 'error');
+                return null;
+            }
+        }
+
+        function beginOauthPolling() {
+            clearInterval(oauthPoll);
+            let attempts = 0;
+            oauthPoll = setInterval(async () => {
+                attempts += 1;
+                const status = await refreshOauthStatus({ quiet: true });
+                if (status?.authorized || attempts >= 300) {
+                    clearInterval(oauthPoll);
+                    oauthPoll = null;
+                    if (status?.authorized) {
+                        setNotice(ui.oauthNotice, '授权完成，可以查看并复制凭据', 'success');
+                    }
+                }
+            }, 2000);
+        }
+
+        ui.startOauth.addEventListener('click', async () => {
+            clearNotice(ui.oauthNotice);
+            clearInterval(oauthPoll);
+            oauthPoll = null;
+            hideOobExchange();
+            oauthWindow = window.open('about:blank', '_blank', 'popup=yes,width=720,height=720');
+            if (!oauthWindow) {
+                setNotice(ui.oauthNotice, '浏览器阻止了授权窗口，请允许本站弹出窗口', 'error');
+                return;
+            }
+            ui.startOauth.disabled = true;
+            try {
+                const response = await api('/api/oauth/start', { method: 'POST' });
+                oauthMode = response.mode || 'callback';
+                oauthWindow.location.replace(response.authorize_url);
+                if (oauthMode === 'oob') {
+                    oauthFlowId = response.flow_id || '';
+                    if (!oauthFlowId) throw new Error('服务端未返回 OOB flow_id');
+                    ui.oobForm.classList.add('show');
+                    setNotice(ui.oauthNotice, '完成百度授权后，在下方提交页面显示的授权码');
+                } else {
+                    beginOauthPolling();
+                }
+            } catch (error) {
+                oauthWindow.close();
+                hideOobExchange();
+                setNotice(ui.oauthNotice, error.message, 'error');
             } finally {
-                loading.classList.remove('show');
-                btn.disabled = false;
+                ui.startOauth.disabled = false;
             }
         });
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        window.addEventListener('message', async (event) => {
+            if (!event.data || event.data.type !== 'baidu-oauth-complete') return;
+            if (event.origin !== window.location.origin) return;
+            if (oauthWindow && event.source !== oauthWindow) return;
+            clearInterval(oauthPoll);
+            oauthPoll = null;
+            await refreshOauthStatus();
+        });
+
+        ui.oobForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const code = ui.authorizationCode.value.trim();
+            if (!oauthFlowId) {
+                setNotice(ui.oauthNotice, '本次授权请求已失效，请重新点击“授权百度网盘”', 'error');
+                return;
+            }
+            if (!code) {
+                setNotice(ui.oauthNotice, '请输入百度页面显示的授权码', 'error');
+                return;
+            }
+
+            ui.exchangeCode.disabled = true;
+            try {
+                await api('/api/oauth/exchange', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ flow_id: oauthFlowId, code })
+                });
+                hideOobExchange();
+                if (oauthWindow && !oauthWindow.closed) oauthWindow.close();
+                await refreshOauthStatus({ quiet: true });
+                setNotice(ui.oauthNotice, '授权完成，可以查看并复制凭据', 'success');
+            } catch (error) {
+                hideOobExchange();
+                setNotice(ui.oauthNotice, `${error.message}；请重新发起授权`, 'error');
+            } finally {
+                ui.exchangeCode.disabled = false;
+            }
+        });
+
+        function shellQuote(value) {
+            const quote = "'";
+            const escapedQuote = quote + '"' + quote + '"' + quote;
+            return quote + String(value).split(quote).join(escapedQuote) + quote;
         }
 
-        function copyLink(index) {
-            const element = document.getElementById('link-' + index);
-            const text = element.textContent;
-            
-            navigator.clipboard.writeText(text).then(() => {
-                alert('✅ 链接已复制到剪贴板！\n\n可以使用 IDM、aria2 等工具下载');
-            }).catch(() => {
-                const textarea = document.createElement('textarea');
-                textarea.value = text;
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
-                alert('✅ 链接已复制到剪贴板！');
-            });
+        ui.showCredentials.addEventListener('click', async () => {
+            try {
+                const value = await api('/api/oauth/credentials');
+                ui.credentials.value = [
+                    `BAIDU_ACCESS_TOKEN=${shellQuote(value.access_token)}`,
+                    `BAIDU_REFRESH_TOKEN=${shellQuote(value.refresh_token)}`,
+                    `BAIDU_CLIENT_ID=${shellQuote(value.client_id)}`,
+                    '# BAIDU_CLIENT_SECRET 已配置在服务端，不返回浏览器'
+                ].join('\n');
+                ui.credentialArea.classList.add('show');
+            } catch (error) {
+                setNotice(ui.oauthNotice, error.message, 'error');
+            }
+        });
+
+        async function copyText(value) {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(value);
+                return;
+            }
+            const helper = document.createElement('textarea');
+            helper.value = value;
+            helper.style.position = 'fixed';
+            helper.style.opacity = '0';
+            document.body.appendChild(helper);
+            helper.select();
+            document.execCommand('copy');
+            helper.remove();
         }
 
-        function directDownload(index) {
-            const element = document.getElementById('link-' + index);
-            const url = element.textContent;
-            window.location.href = url;
+        ui.copyCredentials.addEventListener('click', async () => {
+            try {
+                await copyText(ui.credentials.value);
+                setNotice(ui.oauthNotice, '凭据已复制', 'success');
+            } catch {
+                setNotice(ui.oauthNotice, '复制失败，请手动选择文本', 'error');
+            }
+        });
+
+        function renderResults(items) {
+            ui.resultsList.replaceChildren();
+            for (const item of items) {
+                const row = document.createElement('article');
+                row.className = 'result-row';
+
+                const name = document.createElement('div');
+                name.className = 'result-name';
+                name.textContent = item.filename;
+
+                const url = new URL(item.download_url, window.location.origin).href;
+                const urlBox = document.createElement('div');
+                urlBox.className = 'result-url';
+                urlBox.textContent = url;
+
+                const actions = document.createElement('div');
+                actions.className = 'button-row';
+
+                const copy = document.createElement('button');
+                copy.className = 'secondary compact';
+                copy.type = 'button';
+                copy.textContent = '复制链接';
+                copy.addEventListener('click', () => copyText(url));
+
+                const download = document.createElement('a');
+                download.className = 'button-link primary compact';
+                download.href = url;
+                download.textContent = '打开下载';
+
+                actions.append(copy, download);
+                row.append(name, urlBox, actions);
+                ui.resultsList.append(row);
+            }
+            ui.results.classList.add('show');
         }
+
+        function syncSharePasswordSource() {
+            let hasUrlPassword = false;
+            try {
+                hasUrlPassword = Boolean(new URL(ui.shareLink.value.trim()).searchParams.get('pwd')?.trim());
+            } catch {
+                hasUrlPassword = false;
+            }
+            ui.sharePassword.disabled = hasUrlPassword;
+            ui.sharePassword.placeholder = hasUrlPassword ? '使用链接内提取码' : '可选';
+        }
+
+        ui.shareLink.addEventListener('input', syncSharePasswordSource);
+        syncSharePasswordSource();
+
+        ui.convertForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            clearNotice(ui.convertNotice);
+            ui.convertButton.disabled = true;
+            ui.convertForm.classList.add('busy');
+            try {
+                const response = await api('/api/convert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        link: ui.shareLink.value.trim(),
+                        pwd: ui.sharePassword.value.trim()
+                    })
+                });
+                renderResults(response.items || []);
+                setNotice(ui.convertNotice, `已生成 ${response.items?.length || 0} 个签名下载链接`, 'success');
+            } catch (error) {
+                ui.results.classList.remove('show');
+                setNotice(ui.convertNotice, error.message, 'error');
+            } finally {
+                ui.convertButton.disabled = false;
+                ui.convertForm.classList.remove('busy');
+            }
+        });
+
+        ui.accessForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            refreshOauthStatus();
+        });
+        ui.serviceToken.addEventListener('change', () => refreshOauthStatus());
+
+        if (ui.serviceToken.value) refreshOauthStatus({ quiet: true });
     </script>
 </body>
 </html>

@@ -1,12 +1,32 @@
 /target/
+
+# 敏感环境与本地配置
+.env
+.env.*
+!.env.example
 config.toml
-config.local.toml
-config.*.local.toml
+config.*.toml
+!config.example.toml
+.secrets/
+secrets/
+credentials.json
+credentials.*.json
+client_secret*.json
+oauth*.json
+token.json
+tokens.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.encrypted
+
+# 日志
 *.log
 *.log.*
 .logs/
-.env
-.env.*
 .DS_Store
 
 # Rust
@@ -52,8 +72,3 @@ share_page.html
 .idea/
 .envrc
 .tool-versions
-
-# Token文件
-token.json
-*.encrypted
-

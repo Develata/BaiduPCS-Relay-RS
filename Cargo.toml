@@ -1,6 +1,6 @@
 [package]
 name = "baidu-direct-link"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "MIT"
 description = "百度网盘分享链接转直链"
@@ -44,6 +44,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
+getrandom = "0.3"
 zip = "0.6"
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"

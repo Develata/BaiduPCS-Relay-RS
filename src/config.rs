@@ -80,18 +80,26 @@ impl Config {
                 "WEB_ACCESS_TOKEN/[web].access_token 不能为空或使用默认值 change-me"
             ));
         }
+        if !is_bearer_token_safe(&self.web.access_token) {
+            return Err(anyhow!(
+                "WEB_ACCESS_TOKEN/[web].access_token 只能包含 Bearer token 允许的 ASCII 字符，不能包含空白或控制字符"
+            ));
+        }
         if self.web.sign_secret.is_empty() || self.web.sign_secret == "change-me-sign" {
             return Err(anyhow!(
                 "WEB_SIGN_SECRET/[web].sign_secret 不能为空或使用默认值 change-me-sign"
             ));
         }
-        if self.baidu_open.access_token.is_empty()
-            && (self.baidu_open.refresh_token.is_empty()
-                || self.baidu_open.client_id.is_empty()
-                || self.baidu_open.client_secret.is_empty())
-        {
+        let has_access_token = !self.baidu_open.access_token.is_empty();
+        let has_refresh_source = !self.baidu_open.refresh_token.is_empty()
+            && !self.baidu_open.client_id.is_empty()
+            && !self.baidu_open.client_secret.is_empty();
+        let can_start_oauth = !self.baidu_open.client_id.is_empty()
+            && !self.baidu_open.client_secret.is_empty()
+            && is_supported_oauth_redirect(&self.baidu_open.redirect_uri);
+        if !has_access_token && !has_refresh_source && !can_start_oauth {
             return Err(anyhow!(
-                "Web 直链下载需要配置 BAIDU_ACCESS_TOKEN，或同时配置 BAIDU_REFRESH_TOKEN、BAIDU_CLIENT_ID、BAIDU_CLIENT_SECRET"
+                "Web 直链下载需要配置 BAIDU_ACCESS_TOKEN；或配置 BAIDU_REFRESH_TOKEN、BAIDU_CLIENT_ID、BAIDU_CLIENT_SECRET；或配置 BAIDU_CLIENT_ID、BAIDU_CLIENT_SECRET，并将 BAIDU_REDIRECT_URI 设为 oob 或 http(s) 回调地址后通过前端授权"
             ));
         }
         Ok(())
@@ -166,6 +174,18 @@ fn default_max_zip_size() -> u64 {
     2 * 1024 * 1024 * 1024
 }
 
+fn is_bearer_token_safe(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
+        })
+}
+
+fn is_supported_oauth_redirect(value: &str) -> bool {
+    value == "oob" || value.starts_with("http://") || value.starts_with("https://")
+}
+
 fn override_string(target: &mut String, key: &str) {
     if let Ok(value) = std::env::var(key) {
         if !value.is_empty() {
@@ -221,6 +241,17 @@ mod tests {
     }
 
     #[test]
+    fn rejects_web_access_token_that_cannot_be_sent_as_bearer_token() {
+        let mut config = Config::default();
+        config.web.access_token = "token with spaces".to_string();
+        config.web.sign_secret = "sign-secret".to_string();
+        config.baidu_open.access_token = "baidu-token".to_string();
+
+        let err = config.validate_web().unwrap_err();
+        assert!(err.to_string().contains("Bearer token"));
+    }
+
+    #[test]
     fn rejects_missing_baidu_open_token_for_web() {
         let mut config = Config::default();
         config.web.access_token = "web-token".to_string();
@@ -252,6 +283,35 @@ mod tests {
         config.validate_web().unwrap();
     }
 
+    #[test]
+    fn accepts_oauth_client_without_existing_token() {
+        let mut config = Config::default();
+        config.web.access_token = "web-token".to_string();
+        config.web.sign_secret = "sign-secret".to_string();
+        config.baidu_open.client_id = "client-id".to_string();
+        config.baidu_open.client_secret = "client-secret".to_string();
+        config.baidu_open.redirect_uri = "http://127.0.0.1:5200/oauth/callback".to_string();
+
+        config.validate_web().unwrap();
+    }
+
+    #[test]
+    fn accepts_oob_oauth_client_without_existing_token() {
+        let mut config = Config::default();
+        config.web.access_token = "web-token".to_string();
+        config.web.sign_secret = "sign-secret".to_string();
+        config.baidu_open.client_id = "client-id".to_string();
+        config.baidu_open.client_secret = "client-secret".to_string();
+        config.baidu_open.redirect_uri = "oob".to_string();
+
+        config.validate_web().unwrap();
+    }
+
+    #[test]
+    fn uses_baidu_dlink_user_agent() {
+        assert_eq!(Config::dlink_ua(), "pan.baidu.com");
+    }
+
     fn set_env(key: &str, value: impl AsRef<str>) {
         std::env::set_var(key, value.as_ref());
     }
@@ -266,6 +326,7 @@ mod tests {
             "WEB_SIGN_SECRET",
             "BAIDU_CLIENT_ID",
             "BAIDU_CLIENT_SECRET",
+            "BAIDU_REDIRECT_URI",
             "BAIDU_REFRESH_TOKEN",
             "BAIDU_ACCESS_TOKEN",
         ] {

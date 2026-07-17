@@ -3,6 +3,7 @@
 //! 参考 baidupcs-go 实现
 
 use anyhow::{anyhow, Result};
+use reqwest::header::SET_COOKIE;
 use serde::{Deserialize, Deserializer};
 use tracing::{debug, info, warn};
 
@@ -24,6 +25,14 @@ struct FileItem {
     fs_id: u64,
     #[serde(default)]
     server_filename: String,
+}
+
+struct ShareListRequest<'a> {
+    shareid: &'a str,
+    uk: &'a str,
+    surl: &'a str,
+    bdstoken: &'a str,
+    sekey: &'a str,
 }
 
 /// 自定义反序列化：支持字符串或数字类型的 fsid
@@ -80,22 +89,21 @@ pub async fn get_share_info(
     debug!("✅ 提取到: shareid={}, uk={}", shareid, uk);
 
     let bdstoken = extract_bdstoken(&html);
-    debug!("🔑 bdstoken: {}", bdstoken);
+    debug!(configured = bdstoken != "null", "bdstoken 解析完成");
 
-    // ✅ 如果有提取码，先验证
-    if !pwd.is_empty() {
+    let sekey = if !pwd.is_empty() {
         info!("🔐 验证提取码...");
-        verify_password(state, surl_param, pwd, &bdstoken).await?;
+        let value = verify_password(state, surl_param, pwd, &bdstoken).await?;
         info!("✅ 提取码验证成功");
-
-        // ✅ 等待 Cookie 生效
-        info!("⏳ 等待 Cookie 生效...");
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
+        value
+    } else {
+        String::new()
+    };
 
     // 获取文件列表
     info!("📋 获取文件列表...");
-    let (fs_ids, filenames) = get_file_list(state, &shareid, &uk, surl_param, &bdstoken).await?;
+    let (fs_ids, filenames) =
+        get_file_list(state, &shareid, &uk, surl_param, &bdstoken, &sekey).await?;
 
     if fs_ids.is_empty() {
         return Err(anyhow!("未找到可转存的文件"));
@@ -111,13 +119,18 @@ pub async fn get_share_info(
         uk,
         fs_ids,
         bdstoken,
+        sekey,
         filenames,
     })
 }
 
-/// 验证提取码
-/// 验证提取码
-async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str) -> Result<()> {
+/// 验证提取码并返回转存接口要求的 BDCLND 分享凭据。
+async fn verify_password(
+    state: &AppState,
+    surl: &str,
+    pwd: &str,
+    bdstoken: &str,
+) -> Result<String> {
     let ts_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -132,7 +145,7 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
 
     let form = [("pwd", pwd), ("vcode", ""), ("vcode_str", "")];
 
-    debug!("🔐 提取码验证: surl={}, pwd={}", surl, pwd);
+    debug!(surl, "发送提取码验证请求");
 
     let resp = state
         .client
@@ -150,14 +163,13 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
         .send()
         .await?;
 
-    // ✅ 关键：检查响应头中的 Set-Cookie
-    let cookies = resp.headers().get_all("set-cookie");
-    for cookie in cookies {
-        if let Ok(cookie_str) = cookie.to_str() {
-            debug!("🍪 收到 Cookie: {}", cookie_str);
-            // reqwest 的 cookie_store 会自动保存这些 Cookie
-        }
-    }
+    let sekey = extract_share_key(
+        resp.headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok()),
+    );
+    debug!(present = sekey.is_some(), "BDCLND 分享凭据解析完成");
 
     let text = resp.text().await?;
     debug!("🔑 verify 响应: {}", text);
@@ -189,12 +201,7 @@ async fn verify_password(state: &AppState, surl: &str, pwd: &str, bdstoken: &str
         ));
     }
 
-    info!("✅ 提取码验证成功");
-
-    // ✅ 等待一下，确保 Cookie 生效
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    Ok(())
+    sekey.ok_or_else(|| anyhow!("提取码验证成功，但百度响应未返回 BDCLND 分享凭据"))
 }
 
 /// 获取文件列表
@@ -206,14 +213,22 @@ async fn get_file_list(
     uk: &str,
     surl: &str,
     bdstoken: &str,
+    sekey: &str,
 ) -> Result<(Vec<u64>, Vec<String>)> {
     const PAGE_SIZE: usize = 1000;
+    let request = ShareListRequest {
+        shareid,
+        uk,
+        surl,
+        bdstoken,
+        sekey,
+    };
     let mut page = 1;
     let mut fs_ids = Vec::new();
     let mut filenames = Vec::new();
 
     loop {
-        let list = get_file_list_page(state, shareid, uk, surl, bdstoken, page, PAGE_SIZE).await?;
+        let list = get_file_list_page(state, &request, page, PAGE_SIZE).await?;
         let count = list.len();
         for file in list {
             fs_ids.push(file.get_fsid());
@@ -231,27 +246,43 @@ async fn get_file_list(
 
 async fn get_file_list_page(
     state: &AppState,
-    shareid: &str,
-    uk: &str,
-    surl: &str,
-    bdstoken: &str,
+    request: &ShareListRequest<'_>,
     page: usize,
     page_size: usize,
 ) -> Result<Vec<FileItem>> {
-    let url = format!(
-        "https://pan.baidu.com/share/list?shareid={}&uk={}&shorturl={}&root=1&dir=%2F&page={}&num={}&order=name&desc=1&showempty=0&web=1&channel=chunlei&clienttype=0&bdstoken={}",
-        shareid, uk, surl, page, page_size, bdstoken
-    );
+    let mut url = reqwest::Url::parse("https://pan.baidu.com/share/list")?;
+    let page = page.to_string();
+    let page_size = page_size.to_string();
+    url.query_pairs_mut()
+        .append_pair("shareid", request.shareid)
+        .append_pair("uk", request.uk)
+        .append_pair("shorturl", request.surl)
+        .append_pair("root", "1")
+        .append_pair("dir", "/")
+        .append_pair("page", &page)
+        .append_pair("num", &page_size)
+        .append_pair("order", "name")
+        .append_pair("desc", "1")
+        .append_pair("showempty", "0")
+        .append_pair("web", "1")
+        .append_pair("channel", "chunlei")
+        .append_pair("clienttype", "0")
+        .append_pair("bdstoken", request.bdstoken);
+    if !request.sekey.is_empty() {
+        url.query_pairs_mut()
+            .append_pair("is_from_web", "true")
+            .append_pair("sekey", request.sekey);
+    }
 
-    debug!("📡 调用 list API: {}", url);
+    debug!(page, page_size, "调用 share/list API");
 
     let resp = state
         .client
-        .get(&url)
+        .get(url)
         .header("User-Agent", Config::browser_ua())
         .header(
             "Referer",
-            format!("https://pan.baidu.com/share/init?surl={}", surl),
+            format!("https://pan.baidu.com/share/init?surl={}", request.surl),
         )
         .send()
         .await?;
@@ -318,4 +349,29 @@ fn extract_bdstoken(html: &str) -> String {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn extract_share_key<'a>(headers: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    headers.into_iter().find_map(|header| {
+        header.split(';').find_map(|part| {
+            let value = part.trim().strip_prefix("BDCLND=")?;
+            urlencoding::decode(value)
+                .ok()
+                .map(|decoded| decoded.into_owned())
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_and_decodes_share_key_cookie() {
+        let headers = [
+            "OTHER=value; Path=/",
+            "BDCLND=share%2Bkey%3D; Path=/; Secure; HttpOnly",
+        ];
+        assert_eq!(extract_share_key(headers), Some("share+key=".to_string()));
+    }
 }

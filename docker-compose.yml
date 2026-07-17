@@ -1,23 +1,45 @@
-version: '3.8'
+name: baidupcs-relay
 
 services:
   app:
-    image: rust:1.91
-    container_name: pcs_dev
-    # 自动把当前目录挂载进去
-    volumes:
-      - .:/app
-    working_dir: /app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RUST_VERSION: ${RUST_VERSION:-1.91}
+    image: baidupcs-relay-rs:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    init: true
     ports:
-      - "5200:5200"
-    # 这里配置一次，以后就不用管了
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-5200}:5200"
     environment:
-      - http_proxy=http://host.docker.internal:10808
-      - https_proxy=http://host.docker.internal:10808
-      - HTTP_PROXY=http://host.docker.internal:10808
-      - HTTPS_PROXY=http://host.docker.internal:10808
-      - no_proxy=localhost,127.0.0.1,::1,rsproxy.cn,crates.io
-    # 容器启动后自动安装依赖并运行
-    # 注意：这里把 apt install 和 cargo run 连起来了
-    command: >
-      bash -c "apt-get update && apt-get install -y pkg-config libssl-dev && cargo run"
+      PORT: "5200"
+      RUST_LOG: ${RUST_LOG:-baidu_direct_link=info,web_server=info}
+      BDUSS: ${BDUSS:?BDUSS is required}
+      STOKEN: ${STOKEN:?STOKEN is required}
+      SAVE_PATH: ${SAVE_PATH:-/文档加工}
+      HTTP_TIMEOUT_SECS: ${HTTP_TIMEOUT_SECS:-30}
+      WEB_ACCESS_TOKEN: ${WEB_ACCESS_TOKEN:?WEB_ACCESS_TOKEN is required}
+      WEB_SIGN_SECRET: ${WEB_SIGN_SECRET:?WEB_SIGN_SECRET is required}
+      BAIDU_ACCESS_TOKEN: ${BAIDU_ACCESS_TOKEN:-}
+      BAIDU_REFRESH_TOKEN: ${BAIDU_REFRESH_TOKEN:-}
+      BAIDU_CLIENT_ID: ${BAIDU_CLIENT_ID:-}
+      BAIDU_CLIENT_SECRET: ${BAIDU_CLIENT_SECRET:-}
+      BAIDU_REDIRECT_URI: ${BAIDU_REDIRECT_URI:-oob}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/baidu-web-server", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 10s

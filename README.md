@@ -6,429 +6,396 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
-百度网盘分享链接转直链服务：支持分享链接转存、Web 服务器、本地签名下载跳转。
+将百度网盘分享链接转存到自己的网盘，并生成带本地签名的下载跳转链接。
 
 </div>
 
----
+## 工作流程
 
-## 项目说明
+```text
+分享链接
+  -> 解析 surl / 提取码
+  -> 验证分享并读取 fsid
+  -> 转存到唯一 relay job 目录
+  -> 递归枚举转存结果
+  -> 生成 /d/download 本地签名链接
+  -> 查询百度官方 dlink
+  -> HTTP 302 跳转到百度 PCS 下载地址
+```
 
-- 本项目为学习/研究性质的 Rust 工具，提供百度网盘分享链接处理功能
-- 使用你自己的百度账号 Cookie（BDUSS/STOKEN）在本地发起请求
-- 请自行评估并遵守百度网盘相关服务条款
+Web 是交互壳层，分享解析、转存、OAuth、签名和下载跳转均由 Rust 服务端负责。
 
-## 功能特性
+## 当前能力
 
-### CLI 模式
-- ✅ 支持带/不带提取码的分享链接
-- ✅ 自动拉取分享列表并发起转存
-- ✅ 可配置转存保存路径与 HTTP 超时
+- CLI 分享转存。
+- Web 分享链接转直链。
+- 文件和目录分享，目录结果保留相对路径。
+- URL 内嵌提取码，例如 `...?pwd=9un1`；链接内提取码优先于单独填写值。
+- 每次转换使用 `{SAVE_PATH}/.baidupcs-relay/{job_id}`，避免依赖“最新文件”或固定等待。
+- 百度 OAuth authorization code 流程：OOB 手工授权码和 HTTP(S) callback。
+- 内存 access/refresh token provider，并支持配置 refresh token 后按需刷新。
+- HMAC 签名、过期时间和参数篡改校验。
+- `/d/download` 只返回 302，不代理文件内容。
+- Docker Compose release 构建、健康检查和非 root 运行。
 
-### Web 服务器模式
-- ✅ 分享链接转换为直链
-- ⚠️ v1 暂停服务器端 ZIP 打包（`/api/zip` 返回 501）
-- ✅ 基于官方 `filemetas + dlink` 流程生成本地签名下载链接
-- ✅ 密码保护的 API 接口
-- ✅ 自动递归展开文件夹
+### v1 非目标
 
-### 通用特性
-- ✅ 支持 Docker / Podman 运行（从源码构建启动）
-- ✅ 详细的日志输出
-- ✅ 安全的签名验证
+- `/api/zip` 固定返回 HTTP 501 `zip_unsupported`。
+- 服务不会自动删除已转存的 relay job；生产环境应按自己的保留策略清理。
+- 百度分享页面和部分转存接口属于私有 Web 接口，页面或参数变化时可能需要更新适配层。
+
+## 前置条件
+
+- 百度网盘账号的 `BDUSS` 和 `STOKEN`，用于分享验证和转存。
+- 百度开放平台应用，用于获取下载所需的 access token。
+- 二选一运行环境：
+  - Rust 1.91 或更新版本；
+  - Docker Engine 与 Docker Compose。
+
+百度开放平台 OAuth 流程见[官方授权文档](https://openauth.baidu.com/doc/doc.html)。
 
 ## 快速开始
 
-### 方式一：从 Release 下载（二进制）
-
-1. 下载对应平台的二进制：https://github.com/Develata/BaiduPCS-Relay-RS/releases
-
-> 当前 Release 提供的预编译二进制以 Linux x86_64 为主；其他平台请使用“从源码编译”或 Docker 方式运行。
-
-2. 创建配置文件 `config.toml`：
-
-```toml
-[baidu]
-cookie_bduss = "你的BDUSS"
-cookie_stoken = "你的STOKEN"
-save_path = "/我的资源"
-http_timeout_secs = 120
-
-[web]
-access_token = "your-secret-password"
-sign_secret = "your-sign-secret"
-
-[baidu_open]
-# Web 直链下载必填：二选一配置 access_token，或配置 refresh_token + client_id + client_secret
-client_id = ""
-client_secret = ""
-redirect_uri = ""
-refresh_token = ""
-access_token = ""
-```
-
-3. 运行 CLI 模式（分享转存）：
-
-```bash
-./baidu-direct-link-linux-x86_64 "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
-```
-
-4. 运行 Web 服务器模式：
-
-```bash
-./baidu-web-server-linux-x86_64
-# 服务启动在 http://localhost:5200
-```
-
-### 方式二：从源码编译
+### 从源码运行
 
 ```bash
 git clone https://github.com/Develata/BaiduPCS-Relay-RS.git
 cd BaiduPCS-Relay-RS
 
-cargo build --release
-
 cp config.example.toml config.toml
-# 编辑 config.toml 填入你的 Cookie
+# 编辑 config.toml
 
-# CLI 模式
-./target/release/baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "提取码(可选)"
-
-# Web 服务器模式
-./target/release/baidu-web-server
+cargo run --bin baidu-web-server
 ```
 
-## 配置说明
+打开 <http://127.0.0.1:5200>。服务启动后可检查：
 
-配置文件默认读取当前目录的 `config.toml`。
+```bash
+curl --fail http://127.0.0.1:5200/health
+```
+
+预期响应：
+
+```json
+{"status":"ok","version":"1.1.0"}
+```
+
+### Docker Compose
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入 Cookie、服务密钥和百度 OAuth 配置
+
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+curl --fail http://127.0.0.1:5200/health
+```
+
+默认仅绑定宿主机 `127.0.0.1:5200`。可通过 `BIND_ADDRESS` 和 `HOST_PORT` 修改。
+容器内端口固定为 `5200`。
+
+```bash
+# 查看日志
+docker compose logs -f app
+
+# 停止并删除容器与 Compose 网络
+docker compose down
+```
+
+镜像使用多阶段 release 构建。运行容器采用数值非 root 用户、只读根文件系统、
+`cap_drop: ALL` 和 `no-new-privileges`。健康检查由服务二进制自身执行，不依赖运行时安装
+curl 或其他系统包。
+
+默认不设置代理。确有需要时，在 `.env` 中填写 `HTTP_PROXY` 和 `HTTPS_PROXY`；Docker
+Desktop 访问宿主机代理通常使用 `host.docker.internal`。
+
+## 发布与容器镜像
+
+普通分支 push 和 Pull Request 只运行 CI，不会发布 Release 或容器镜像。只有推送格式为
+`vMAJOR.MINOR.PATCH` 的 tag 才会触发发布工作流，且 tag 版本必须与 `Cargo.toml` 中的包版本
+完全一致。
+
+发布产物包括：
+
+- GitHub Release：Linux x86_64 压缩包，内含 Web/CLI 二进制、README、配置示例和 MIT LICENSE；
+- `SHA256SUMS`：Release 二进制包的 SHA-256 校验值；
+- GHCR 镜像：`linux/amd64` 与 `linux/arm64` 多架构镜像；
+- 镜像标签：完整版本、主次版本、主版本和稳定版 `latest`。
+
+发布前先更新 `Cargo.toml` 版本并确认普通 CI 通过，然后创建并单独推送 tag：
+
+```bash
+git tag -a v1.1.0 -m 'Release v1.1.0'
+git push origin v1.1.0
+```
+
+拉取稳定版镜像：
+
+```bash
+docker pull ghcr.io/develata/baidupcs-relay-rs:latest
+```
+
+首次发布 GHCR package 后，需要在 GitHub Packages 设置中确认其可见性为 Public。
+
+## 配置
+
+配置文件默认为 `config.toml`，环境变量覆盖 TOML。可通过 `CONFIG_PATH` 指定其他文件。
+
+### TOML
 
 ```toml
 [baidu]
-# 必填：百度网盘 BDUSS（建议从浏览器 Cookie 原样复制）
 cookie_bduss = "YOUR_BDUSS"
-
-# 必填：百度网盘 STOKEN
 cookie_stoken = "YOUR_STOKEN"
-
-# 必填：转存保存路径（网盘目录，需要你提前创建）
 save_path = "/我的资源"
-
-# 可选：HTTP 请求超时时间（秒）- 推荐 120-300，避免大文件下载超时
 http_timeout_secs = 120
 
 [web]
-# Web 服务器访问密码（调用 API 时作为 token 传入）
-access_token = "your-secret-password"
-
-# 签名密钥（用于生成下载链接签名）
-sign_secret = "your-sign-secret"
-
-# v1 暂不支持服务器端 ZIP；该字段仅保留配置兼容
-# max_zip_size = 2147483648
+access_token = "replace-with-a-strong-service-token"
+sign_secret = "replace-with-a-long-random-signing-secret"
 
 [baidu_open]
-# Web 直链下载必填：百度开放平台 token 来源
-# 二选一：直接填写 access_token，或填写 refresh_token + client_id + client_secret
 client_id = ""
 client_secret = ""
-redirect_uri = ""
+redirect_uri = "oob"
 refresh_token = ""
 access_token = ""
 ```
 
-### CLI 模式（分享转存）
+Web 启动会拒绝空值以及默认的 `change-me` / `change-me-sign`。
+
+### 环境变量
+
+| 变量 | 用途 |
+| --- | --- |
+| `CONFIG_PATH` | TOML 配置路径 |
+| `BDUSS` / `STOKEN` | 百度账号 Cookie |
+| `SAVE_PATH` | 转存根目录 |
+| `HTTP_TIMEOUT_SECS` | 百度 HTTP 请求超时 |
+| `PORT` | Web 容器内/进程监听端口 |
+| `WEB_ACCESS_TOKEN` | 本服务 Bearer token |
+| `WEB_SIGN_SECRET` | 本地下载链接 HMAC 密钥 |
+| `BAIDU_ACCESS_TOKEN` | 静态百度 access token |
+| `BAIDU_REFRESH_TOKEN` | 百度 refresh token |
+| `BAIDU_CLIENT_ID` | 百度开放平台 AppKey |
+| `BAIDU_CLIENT_SECRET` | 百度开放平台 SecretKey |
+| `BAIDU_REDIRECT_URI` | `oob` 或登记的 HTTP(S) 回调地址 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 可选出站代理 |
+
+Web 下载至少需要以下一种 token 来源：
+
+1. `BAIDU_ACCESS_TOKEN`；
+2. `BAIDU_REFRESH_TOKEN + BAIDU_CLIENT_ID + BAIDU_CLIENT_SECRET`；
+3. `BAIDU_CLIENT_ID + BAIDU_CLIENT_SECRET + BAIDU_REDIRECT_URI`，启动后从前端授权。
+
+## OAuth 授权
+
+### OOB 模式
+
+本地部署推荐：
 
 ```bash
-./baidu-direct-link <分享链接> [提取码] [配置文件路径]
-
-# 无提取码
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx"
-
-# 有提取码
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234"
-
-# 指定配置文件路径
-./baidu-direct-link "https://pan.baidu.com/s/1xxxxx" "1234" "/path/to/config.toml"
+BAIDU_REDIRECT_URI=oob
 ```
 
-#### 批量转存（脚本示例）
+打开 Web 页面并点击“授权百度网盘”。完成百度授权后，将页面显示的一次性 authorization
+code 粘贴回本地页面。授权码和服务端生成的 `flow_id` 都只能使用一次。
+
+### HTTP callback
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-items=(
-  "https://pan.baidu.com/s/1xxxx|1234"
-  "https://pan.baidu.com/s/1yyyy|5678"
-  "https://pan.baidu.com/s/1zzzz|"
-)
-
-for item in "${items[@]}"; do
-  IFS='|' read -r link pwd <<< "$item"
-  echo "转存: $link"
-  ./baidu-direct-link "$link" "$pwd"
-  sleep 2
-done
+BAIDU_REDIRECT_URI=http://127.0.0.1:5200/oauth/callback
 ```
 
-### Web 服务器模式
+该地址必须与百度开放平台安全设置中登记的回调地址完全一致。回调使用一次性 `state`
+防止请求伪造。
 
-启动服务器：
+Client Secret 仅参与 Rust 服务端 code/token 交换，不写入 HTML，也不会从凭据接口返回。
+前端授权得到的 token 默认只保存在当前进程；需要跨重启使用时，应安全持久化 refresh token。
+
+## API
+
+除 `/health`、`/oauth/callback` 和签名后的 `/d/download` 外，API 均要求：
+
+```http
+Authorization: Bearer <WEB_ACCESS_TOKEN>
+```
+
+请求体中的 `token` 字段仅为旧客户端兼容，推荐使用 Bearer header。
+
+### 转换分享链接
 
 ```bash
-./baidu-web-server
-# 服务启动在 http://localhost:5200
+curl -X POST http://127.0.0.1:5200/api/convert \
+  -H 'Authorization: Bearer your-service-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "link": "https://pan.baidu.com/s/1xxxxx?pwd=1234",
+    "pwd": ""
+  }'
 ```
 
-#### API 接口
+如果 `link` 含非空 `pwd`，服务端忽略请求体或 CLI 参数中的提取码，使用链接内值。
 
-**1. 分享链接转直链**
-
-```bash
-POST /api/convert
-Content-Type: application/json
-
-{
-  "link": "https://pan.baidu.com/s/1xxxxx",
-  "pwd": "提取码(可选)",
-  "token": "your-secret-password"
-}
-```
-
-响应：
 ```json
 {
   "success": true,
   "items": [
     {
       "fsid": 123456,
-      "filename": "文件名.pdf",
-      "download_url": "/d/download?fsid=xxx&expires=xxx&filename=xxx&sign=xxx",
+      "filename": "dir/file.mp4",
+      "download_url": "/d/download?fsid=...&expires=...&filename=...&sign=...",
       "expires": 1234567890
     }
   ],
-  "transfer_job": "..."
+  "transfer_job": "job-id"
 }
 ```
 
-**2. ZIP 打包**
+### 下载
 
-v1 暂不提供服务器端 ZIP 打包能力。调用 `/api/zip` 会返回 `501`：
+`download_url` 先验证本地签名，再解析百度 dlink，最后返回 HTTP 302。百度 dlink 请求和
+下载客户端应使用：
 
-```json
-{
-  "success": false,
-  "error": {
-    "code": "zip_unsupported",
-    "message": "v1 暂不支持服务器端 ZIP 打包；请使用 /api/convert 获取单文件签名下载链接"
-  }
-}
+```http
+User-Agent: pan.baidu.com
 ```
 
-**3. 健康检查**
+命令行示例：
 
 ```bash
-GET /health
+curl --fail --location \
+  --user-agent 'pan.baidu.com' \
+  --output file.bin \
+  'http://127.0.0.1:5200/d/download?...'
 ```
 
-详细使用说明见 [TEST_GUIDE.md](TEST_GUIDE.md)。
+签名默认有效期由服务端工作流设置；过期或修改 `fsid`、`filename`、`expires` 会被拒绝。
 
-## Docker 运行
+### OAuth 管理
 
-仓库提供 [docker-compose.yml](docker-compose.yml) 用于在容器中从源码启动服务（适合本地开发/快速试跑）。
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/oauth/start` | 创建一次性 state/flow 并返回授权 URL |
+| `POST` | `/api/oauth/exchange` | OOB 模式提交 authorization code |
+| `GET` | `/api/oauth/status` | 查询 OAuth 配置和 token 状态 |
+| `GET` | `/api/oauth/credentials` | 读取本进程授权结果；响应敏感 |
+| `GET` | `/oauth/callback` | HTTP callback 入口 |
 
-1) 准备配置：
+### 其他接口
+
+| 方法 | 路径 | 结果 |
+| --- | --- | --- |
+| `GET` | `/health` | JSON 健康状态 |
+| `POST` | `/api/zip` | HTTP 501 `zip_unsupported` |
+
+## CLI
+
+CLI 只执行分享转存，不生成 Web 签名链接：
 
 ```bash
-cp config.example.toml config.toml
-# 编辑 config.toml 填入你的 Cookie
+cargo run --bin baidu-direct-link -- \
+  'https://pan.baidu.com/s/1xxxxx?pwd=1234'
 ```
 
-2) 启动 Web 服务器：
+也可以单独传入提取码和配置路径：
 
 ```bash
-docker compose up --build
-# 服务启动在 http://localhost:5200
+./baidu-direct-link '<share-url>' '[pwd]' '[/path/to/config.toml]'
 ```
 
-3) 在容器中运行 CLI（一次性）：
+Docker 中运行 CLI：
 
 ```bash
-docker compose run --rm app bash -lc "apt-get update && apt-get install -y pkg-config libssl-dev && cargo run --bin baidu-direct-link -- 'https://pan.baidu.com/s/1xxxxx' '1234'"
+docker compose run --rm --no-deps \
+  --entrypoint /usr/local/bin/baidu-direct-link \
+  app 'https://pan.baidu.com/s/1xxxxx?pwd=1234'
 ```
 
-## 安全提示
+## Relay 目录
 
-- 请勿分享或提交 config.toml（包含敏感 Cookie）
-- BDUSS/STOKEN 等同于账号凭证，请妥善保管
-- 建议将配置权限设置为仅自己可读写：
+每次 Web 转换创建：
+
+```text
+{SAVE_PATH}/.baidupcs-relay/{job_id}
+```
+
+服务只枚举该 job，避免混入并发任务或保存目录中的旧文件。转换成功后不会自动删除百度
+网盘中的 job；请根据业务保留周期，通过百度客户端或官方文件管理 API 清理。
+
+## 安全
+
+- `BDUSS`、`STOKEN`、Client Secret、access/refresh token 都是敏感凭据。
+- `.env`、`.env.e2e` 和 `config.toml` 已被 Git 忽略，但仍应设置为仅当前用户可读。
+- 不要将服务直接暴露到公网；默认 Compose 仅监听 `127.0.0.1`。
+- `/api/oauth/credentials` 会返回 access/refresh token，只应在可信网络中使用。
+- 使用足够长且互不相同的 `WEB_ACCESS_TOKEN` 与 `WEB_SIGN_SECRET`。
+- 日志不得记录 Cookie、提取码、bdstoken、sekey 或 token。
+
+## 验证
+
+默认测试不依赖真实百度账号：
 
 ```bash
-chmod 600 config.toml
-```
-
-## 日志说明
-
-### 正常运行示例
-
-```
-🚀 百度网盘转存工具启动中...
-✅ 配置加载完成: config.toml
-✅ HTTP Client 初始化完成
-📥 获取分享信息: surl=158pDc
-🌐 访问分享页面: https://pan.baidu.com/share/init?surl=58pDc
-✅ 提取到: shareid=123456, uk=789012
-🔑 bdstoken: abc123def456
-📋 获取文件列表...
-✅ 找到 1 个文件
-  1. 示例文件.pdf
-📦 开始转存 1 个文件...
-🔍 验证保存路径: /我的资源
-✅ 保存路径存在
-🚀 发送转存请求...
-✅ 转存成功! (errno=0)
-📂 文件已保存至: /我的资源
-```
-
-### 常见错误
-
-#### Cookie 失效/未登录
-```
-❌ errno=2 - Cookie 失效或未登录
-📝 请检查 config.toml 中的:
-   1. cookie_bduss (长度应为192字符)
-   2. cookie_stoken (长度应为32字符)
-```
-
-**解决方法：** 重新获取 Cookie
-
-#### 保存路径不存在
-```
-❌ 保存路径不存在 (errno=-20)
-📝 当前路径: /我的资源
-💡 请在百度网盘中创建该文件夹
-```
-
-**解决方法：** 在网盘中创建对应目录
-
-#### 分享链接失效/被删除
-```
-❌ errno=-7 - 分享链接已过期或被删除
-```
-
-**解决方法：** 确认分享链接有效
-
-## 致谢
-
-### 核心参考
-
-本项目参考了以下优秀开源项目：
-
-- **[BaiduPCS-Go](https://github.com/qjfoidnh/BaiduPCS-Go)** (Apache-2.0) by [@qjfoidnh](https://github.com/qjfoidnh)
-  - 百度网盘命令行客户端
-  - 本项目的转存逻辑和 API 调用方式参考了该项目的实现
-  - 包括：API 参数配置、User-Agent 设置、错误处理机制
-  - 特别感谢开源贡献 🙏
-
-### 技术栈
-
-- [Rust](https://www.rust-lang.org/) - 系统编程语言
-- [Tokio](https://tokio.rs/) - 异步运行时
-- [Reqwest](https://github.com/seanmonstar/reqwest) - HTTP 客户端
-- [Serde](https://serde.rs/) - 序列化框架
-
-## 系统要求
-
-### 最低配置
-- CPU: 单核
-- 内存: 32 MB
-- 存储: 10 MB
-
-### 推荐配置
-- CPU: 双核
-- 内存: 64 MB
-- 存储: 50 MB
-
-### 支持平台
-- ✅ 预编译二进制：Linux x86_64（见 Release）
-- ✅ 从源码编译：Rust 支持的平台（取决于本地 Rust 工具链与依赖）
-- ✅ Docker / Podman：使用本仓库的 docker-compose 从源码运行
-
-## 常见问题
-
-### Q: Cookie 在哪里获取？
-A: 浏览器登录 pan.baidu.com → F12 → Application → Cookies → 复制 BDUSS 和 STOKEN
-
-### Q: Cookie 多久会过期？
-A: 通常 30-90 天，过期后重新获取即可。
-
-### Q: 为什么提示"保存路径不存在"？
-A: 需要在百度网盘中**先创建**对应文件夹，工具不会自动创建。
-
-### Q: 支持批量转存吗？
-A: 支持，可以写 Shell 脚本循环调用（见上面的批量转存脚本示例）。
-
-### Q: 转存后文件在哪里？
-A: 在 `config.toml` 中 `save_path` 指定的网盘目录下。
-
-### Q: 为什么是 AI 写的代码？
-A: 作者在学习 Rust，使用 AI 辅助快速实现想法。代码可能不完美，欢迎 PR 改进！
-
-### Q: 可以商用吗？
-A: MIT 许可证允许商用，但请遵守百度网盘服务条款。
-
-### 常见错误码
-
-| errno | 含义 | 解决方法 |
-|-------|------|----------|
-| 0 | 成功 | - |
-| 2 | Cookie失效/路径错误 | 检查 Cookie 和路径 |
-| 12 | 文件已存在 | 正常，表示转存成功 |
-| -7 | 分享链接失效 | 检查链接是否有效 |
-| -9 | 提取码错误 | 检查提取码 |
-| -20 | 路径不存在 | 在网盘中创建目录 |
-| 110 | 分享已过期 | 链接已失效 |
-
-## 贡献指南
-
-虽然代码主要由 AI 生成，但仍然欢迎贡献！
-
-```
-# 1. Fork 项目
-# 2. 创建分支
-git checkout -b feature/your-feature
-
-# 3. 提交代码
-git commit -m 'Add some feature'
-
-# 4. 推送分支
-git push origin feature/your-feature
-
-# 5. 提交 Pull Request
-```
-
-### 代码规范
-
-```
-# 格式化代码
-cargo fmt
-
-# 代码检查
-cargo clippy -- -D warnings
-
-# 运行测试
+cargo fmt --all -- --check
 cargo test
+cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+真实账号测试必须显式提供凭据，并在隔离的百度网盘目录中运行。详细步骤见
+[TEST_GUIDE.md](TEST_GUIDE.md)。
+
+## 故障排查
+
+### Web 启动失败并提示默认密钥
+
+设置非默认的 `WEB_ACCESS_TOKEN` 和 `WEB_SIGN_SECRET`。
+
+### 分享提取码错误
+
+检查 URL 是否已包含 `pwd`。URL 内非空值优先于表单、CLI 或 API 请求体中的值。
+
+### Cookie 或权限错误
+
+重新登录百度网盘并更新 `BDUSS`、`STOKEN`。不要在 issue 或日志中粘贴完整 Cookie。
+
+### 下载命中防盗链
+
+确认下载客户端使用 `User-Agent: pan.baidu.com`，并重新请求本地签名 URL 以获得新的百度
+dlink。
+
+### Docker 容器不健康
+
+```bash
+docker compose ps
+docker compose logs --tail 100 app
+docker compose exec app /usr/local/bin/baidu-web-server --healthcheck
+```
+
+不要默认硬编码宿主机代理；只有确认容器无法直接出站时才配置代理。
+
+## 项目结构
+
+```text
+src/bin/web_server.rs   Web/API 入口和内置 healthcheck
+src/direct_link.rs      分享转直链工作流
+src/baidupcs/           百度 API 适配层
+src/signing.rs          本地下载链接签名
+templates/index.html    Web 交互壳层
+Dockerfile              多阶段 release 镜像
+docker-compose.yml      本地安全部署基线
+```
+
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 免责声明
 
-- 本项目仅供学习交流，请勿用于违法用途
-- 使用本工具需遵守百度网盘服务条款
-- 请勿分享违法、侵权内容
-- 建议合理使用，避免频繁请求
-- 使用产生的任何后果由使用者自行承担
-- 代码由 AI 辅助生成，可能存在未知问题
+- 本项目仅供学习、研究和个人自动化使用。
+- 使用者必须遵守百度网盘服务条款和所在地法律法规。
+- 不得用于传播违法、侵权内容或绕过平台访问控制。
+- 百度私有接口可能随时变化，使用风险由使用者自行承担。
 
-## 开源协议
+## License
 
-[MIT License](LICENSE)
+本项目采用 [MIT License](LICENSE) 开源。

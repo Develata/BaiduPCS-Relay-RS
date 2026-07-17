@@ -32,7 +32,7 @@ pub async fn get_or_refresh_access_token(state: &AppState) -> Result<String> {
     }
 
     let open_cfg = &state.config.baidu_open;
-    if !open_cfg.refresh_token.is_empty() {
+    if state.current_refresh_token().is_some() {
         match refresh_access_token(state).await {
             Ok(token) => return Ok(token),
             Err(err) if !open_cfg.access_token.is_empty() => {
@@ -49,13 +49,7 @@ pub async fn get_or_refresh_access_token(state: &AppState) -> Result<String> {
 }
 
 pub async fn refresh_access_token(state: &AppState) -> Result<String> {
-    if state.config.baidu_open.refresh_token.is_empty() {
-        return Err(anyhow!("未配置 BAIDU_REFRESH_TOKEN"));
-    }
-
-    let token = crate::baidupcs::openapi::refresh_token(state).await?;
-    state.cache_access_token(token.clone());
-    Ok(token)
+    crate::baidupcs::openapi::refresh_token(state).await
 }
 
 pub async fn get_fsid_meta(state: &AppState, fsid: u64, access_token: &str) -> Result<FsidMeta> {

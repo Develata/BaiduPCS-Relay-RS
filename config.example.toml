@@ -16,15 +16,18 @@ access_token = "your-secret-password"  # 设置你的访问密码
 sign_secret = "your-sign-secret"      # 本地直链签名密钥，不能使用默认值 change-me-sign
 
 [baidu_open]
-# Web /d/download 需要百度开放平台 access_token；二选一：
+# Web /d/download 需要百度开放平台 access_token；三选一：
 # 1. 直接填写 access_token；
 # 2. 填写 refresh_token + client_id + client_secret，由程序启动后按需刷新。
+# 3. 填写 client_id + client_secret + redirect_uri，启动 Web 后在前端完成官方 OAuth 授权。
 # client_id / client_secret 请在百度开放平台应用详情中查看。
 client_id = ""
 client_secret = ""
-redirect_uri = ""
+# 推荐本地部署使用 oob：授权后将百度页面显示的授权码粘贴回前端。
+# 也可改为已在百度开放平台“安全设置”中登记的完整 HTTP(S) 回调地址，自动完成回调。
+redirect_uri = "oob"
 
-# 建议在完成一次 OAuth 授权后，将 refresh_token 填写到这里，程序自行刷新 access_token
+# 前端授权结果默认只保存在内存；重启后若不想重新授权，可安全地持久化 refresh_token。
 refresh_token = ""
 
 # 如果你已经有一个长期有效的 access_token，也可以直接填在这里；有 refresh_token 时会优先刷新，失败后才回退到该值

@@ -14,8 +14,10 @@ pub use download::{
     zip_directory_by_path_to_bytes, zip_fsids_to_bytes,
 };
 
-pub use openapi::refresh_token;
-pub use parser::extract_surl;
+pub use openapi::{authorization_url, exchange_authorization_code, is_oob_redirect, refresh_token};
+pub use parser::{extract_surl, parse_share_input};
 pub use share::get_share_info;
-pub use transfer::transfer_files;
-pub use types::{DownloadTarget, PanEntry, ShareFileInfo, ShareInput, ShareListing, TransferJob};
+pub use transfer::{transfer_files, TransferRequest};
+pub use types::{
+    DownloadTarget, OAuthTokenSet, PanEntry, ShareFileInfo, ShareInput, ShareListing, TransferJob,
+};
